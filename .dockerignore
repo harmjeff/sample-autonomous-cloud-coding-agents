@@ -1,0 +1,43 @@
+# Exclude everything not needed in the agent Docker build context.
+# Build context is repo root so Dockerfile can COPY blueprints/ alongside agent/.
+
+# CDK output (causes recursive inclusion if not excluded)
+cdk/cdk.out/
+cdk/lib/
+cdk/node_modules/
+
+# CLI and docs build artifacts
+cli/lib/
+cli/node_modules/
+docs/dist/
+docs/node_modules/
+docs/.astro/
+
+# Shared node_modules
+node_modules/
+
+# Agent venv and cache (rebuilt inside image via uv)
+agent/.venv/
+agent/__pycache__/
+agent/**/__pycache__/
+agent/**/*.pyc
+
+# Git and tooling
+.git/
+.prek/
+.claude/
+**/.DS_Store
+
+# Docs and assets not needed in image
+*.md
+*.png
+*.drawio
+*.html
+*.gif
+*.tape
+
+# Infra and scripts not part of agent runtime
+infra/
+scripts/
+docs/
+cli/
