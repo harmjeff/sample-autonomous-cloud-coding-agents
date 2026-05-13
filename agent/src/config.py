@@ -54,6 +54,8 @@ def build_config(
     pr_number: str = "",
     trace: bool = False,
     user_id: str = "",
+    task_mode: str = "coding",
+    blueprint_id: str = "",
 ) -> TaskConfig:
     """Build and validate configuration from explicit parameters.
 
@@ -69,10 +71,11 @@ def build_config(
     )
 
     errors = []
-    if not resolved_repo_url:
-        errors.append("repo_url is required (e.g., 'owner/repo')")
-    if not resolved_github_token:
-        errors.append("github_token is required")
+    if task_mode == "coding":
+        if not resolved_repo_url:
+            errors.append("repo_url is required (e.g., 'owner/repo')")
+        if not resolved_github_token:
+            errors.append("github_token is required")
     if not resolved_aws_region:
         errors.append("aws_region is required for Bedrock")
     try:
@@ -106,6 +109,8 @@ def build_config(
         task_id=task_id or uuid.uuid4().hex[:12],
         trace=trace,
         user_id=user_id,
+        task_mode=task_mode,
+        blueprint_id=blueprint_id,
     )
 
 
@@ -130,6 +135,8 @@ def get_config() -> TaskConfig:
             # an unreachable ``traces//`` key.
             trace=os.environ.get("TRACE", "").lower() in ("1", "true", "yes"),
             user_id=os.environ.get("USER_ID", ""),
+            task_mode=os.environ.get("TASK_MODE", "coding"),
+            blueprint_id=os.environ.get("BLUEPRINT_ID", ""),
         )
     except ValueError as e:
         print(f"ERROR: {e}", file=sys.stderr)

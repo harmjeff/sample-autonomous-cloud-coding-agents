@@ -244,6 +244,8 @@ def run_task(
     cedar_policies: list[str] | None = None,
     trace: bool = False,
     user_id: str = "",
+    task_mode: str = "coding",
+    blueprint_id: str = "",
 ) -> dict:
     """Run the full agent pipeline and return a serialized result dict.
 
@@ -370,53 +372,56 @@ def run_task(
 
                     prompt = assemble_prompt(config)
 
-            # Configure git and gh auth before setup_repo() uses them
-            subprocess.run(
-                ["git", "config", "--global", "user.name", "bgagent"],
-                check=True,
-                capture_output=True,
-                timeout=60,
-            )
-            subprocess.run(
-                ["git", "config", "--global", "user.email", "bgagent@noreply.github.com"],
-                check=True,
-                capture_output=True,
-                timeout=60,
-            )
-            os.environ["GITHUB_TOKEN"] = config.github_token
-            os.environ["GH_TOKEN"] = config.github_token
+            # ----------------------------------------------------------------
+            # Coding path: git/repo setup (skipped for knowledge tasks)
+            # ----------------------------------------------------------------
+            setup = None
+            repo_dir = AGENT_WORKSPACE
+            if config.task_mode == "coding":
+                # Configure git and gh auth before setup_repo() uses them
+                subprocess.run(
+                    ["git", "config", "--global", "user.name", "bgagent"],
+                    check=True,
+                    capture_output=True,
+                    timeout=60,
+                )
+                subprocess.run(
+                    ["git", "config", "--global", "user.email", "bgagent@noreply.github.com"],
+                    check=True,
+                    capture_output=True,
+                    timeout=60,
+                )
+                os.environ["GITHUB_TOKEN"] = config.github_token
+                os.environ["GH_TOKEN"] = config.github_token
 
-            # Set env vars for the prepare-commit-msg hook BEFORE setup_repo()
-            # so the hook has access to TASK_ID/PROMPT_VERSION from the start.
-            os.environ["TASK_ID"] = config.task_id
-            if prompt_version:
-                os.environ["PROMPT_VERSION"] = prompt_version
+                # Set env vars for the prepare-commit-msg hook BEFORE setup_repo()
+                os.environ["TASK_ID"] = config.task_id
+                if prompt_version:
+                    os.environ["PROMPT_VERSION"] = prompt_version
 
-            # Setup repo (deterministic pre-hooks)
-            with task_span("task.repo_setup") as setup_span:
-                setup = setup_repo(config)
-                setup_span.set_attribute("build.before", setup.build_before)
-            progress.write_agent_milestone(
-                "repo_setup_complete",
-                f"branch={setup.branch} build_before={setup.build_before}",
-            )
+                with task_span("task.repo_setup") as setup_span:
+                    setup = setup_repo(config)
+                    setup_span.set_attribute("build.before", setup.build_before)
+                progress.write_agent_milestone(
+                    "repo_setup_complete",
+                    f"branch={setup.branch} build_before={setup.build_before}",
+                )
+                repo_dir = setup.repo_dir
+
+                project_config = discover_project_config(repo_dir)
+                if project_config:
+                    log("TASK", f"Repo project configuration: {project_config}")
+                else:
+                    log("TASK", "No repo-level project configuration found")
 
             system_prompt = build_system_prompt(config, setup, hc, system_prompt_overrides)
-
-            # Log discovered repo-level project configuration
-            # (all files loaded by setting_sources=["project"])
-            repo_dir = setup.repo_dir
-            project_config = discover_project_config(repo_dir)
-            if project_config:
-                log("TASK", f"Repo project configuration: {project_config}")
-            else:
-                log("TASK", "No repo-level project configuration found")
 
             # Run agent
             disk_before = get_disk_usage(AGENT_WORKSPACE)
             start_time = time.time()
 
             log("TASK", "Starting agent...")
+            log("TASK", f"Task mode: {config.task_mode}")
             if config.max_budget_usd:
                 log("TASK", f"Budget limit: ${config.max_budget_usd:.2f}")
             # Warn if uvloop is the active policy — subprocess SIGCHLD conflicts.
@@ -435,7 +440,7 @@ def run_task(
                             prompt,
                             system_prompt,
                             config,
-                            cwd=setup.repo_dir,
+                            cwd=repo_dir,
                             trajectory=trajectory,
                         )
                     )
@@ -502,30 +507,34 @@ def run_task(
                     "turns_attempted": agent_result.num_turns or agent_result.turns,
                 }
 
-            # Post-hooks (agent_result is guaranteed set by the try/except above)
-            with task_span("task.post_hooks") as post_span:
-                # Safety net: commit any uncommitted tracked changes (skip for read-only tasks)
-                if config.task_type == "pr_review":
-                    safety_committed = False
-                else:
-                    safety_committed = ensure_committed(setup.repo_dir)
-                post_span.set_attribute("safety_net.committed", safety_committed)
+            # Post-hooks — coding tasks only (knowledge tasks have no repo/PR)
+            build_passed = True
+            lint_passed = True
+            pr_url = None
+            if config.task_mode == "coding" and setup is not None:
+                with task_span("task.post_hooks") as post_span:
+                    # Safety net: commit any uncommitted tracked changes (skip for read-only tasks)
+                    if config.task_type == "pr_review":
+                        safety_committed = False
+                    else:
+                        safety_committed = ensure_committed(setup.repo_dir)
+                    post_span.set_attribute("safety_net.committed", safety_committed)
 
-                build_passed = verify_build(setup.repo_dir)
-                lint_passed = verify_lint(setup.repo_dir)
-                pr_url = ensure_pr(
-                    config, setup, build_passed, lint_passed, agent_result=agent_result
-                )
-                post_span.set_attribute("build.passed", build_passed)
-                post_span.set_attribute("lint.passed", lint_passed)
-                post_span.set_attribute("pr.url", pr_url or "")
-            if pr_url:
-                progress.write_agent_milestone("pr_created", pr_url)
+                    build_passed = verify_build(setup.repo_dir)
+                    lint_passed = verify_lint(setup.repo_dir)
+                    pr_url = ensure_pr(
+                        config, setup, build_passed, lint_passed, agent_result=agent_result
+                    )
+                    post_span.set_attribute("build.passed", build_passed)
+                    post_span.set_attribute("lint.passed", lint_passed)
+                    post_span.set_attribute("pr.url", pr_url or "")
+                if pr_url:
+                    progress.write_agent_milestone("pr_created", pr_url)
 
             # Memory write — capture task episode and repo learnings
             memory_written = False
             effective_memory_id = memory_id or os.environ.get("MEMORY_ID", "")
-            if effective_memory_id:
+            if effective_memory_id and setup is not None:
                 memory_written = _write_memory(
                     config,
                     setup,
@@ -546,8 +555,9 @@ def run_task(
             agent_status = agent_result.status
             # Default True = assume build was green before, so a post-agent
             # failure IS counted as a regression (conservative).
-            build_before = setup.build_before
-            if config.task_type == "pr_review":
+            # Knowledge tasks have no setup; treat build as passed.
+            build_before = setup.build_before if setup is not None else True
+            if config.task_type == "pr_review" or config.task_mode == "knowledge":
                 build_ok = True  # Review task — build status is informational only
                 if not build_passed:
                     log("INFO", "pr_review: build failed — informational only, not gating")

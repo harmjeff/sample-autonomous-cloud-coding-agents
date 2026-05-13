@@ -126,6 +126,11 @@ class TaskConfig(BaseModel):
     cedar_policies: list[str] = []
     issue: GitHubIssue | None = None
     base_branch: str | None = None
+    # Task execution mode — 'coding' (default) requires repo + git setup;
+    # 'knowledge' skips git scaffolding and GitHub context hydration.
+    task_mode: str = "coding"
+    # Blueprint ID from FilesystemRegistryService (e.g. 'coding/new-task-v1').
+    blueprint_id: str = ""
 
     @model_validator(mode="after")
     def _validate_trace_requires_user_id(self) -> Self:

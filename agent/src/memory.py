@@ -65,6 +65,20 @@ def _log_error(func_name: str, err: Exception, memory_id: str, task_id: str) -> 
     )
 
 
+def _resolve_scope_id(repo: str, user_id: str = "") -> str:
+    """Return the memory namespace key for a task.
+
+    Coding tasks (valid owner/repo) scope by repo.
+    Knowledge tasks (no repo or user_id only) scope by user_id.
+    Falls back to repo string as-is if neither matches.
+    """
+    if repo and _REPO_PATTERN.match(repo):
+        return repo
+    if user_id:
+        return user_id
+    return repo or "unknown"
+
+
 def write_task_episode(
     memory_id: str,
     repo: str,
@@ -74,6 +88,7 @@ def write_task_episode(
     cost_usd: float | None = None,
     duration_s: float | None = None,
     self_feedback: str | None = None,
+    user_id: str = "",
 ) -> bool:
     """Write a task episode to AgentCore Memory as a short-term event.
 
@@ -81,9 +96,9 @@ def write_task_episode(
     status, PR URL, cost, duration, and any self-feedback from the
     agent's "## Agent notes" section in the PR body.
 
-    Uses actorId=repo and sessionId=task_id so the extraction strategy
-    namespace templates (/{actorId}/episodes/{sessionId}/) place records
-    into the correct per-repo, per-task namespace.
+    Uses actorId=scope_id (repo for coding tasks, user_id for knowledge tasks)
+    and sessionId=task_id so the extraction strategy namespace templates
+    (/{actorId}/episodes/{sessionId}/) place records into the correct namespace.
 
     Metadata includes source_type='agent_episode' for provenance tracking
     and content_sha256 for integrity auditing on read (schema v3).
@@ -91,7 +106,7 @@ def write_task_episode(
     Returns True on success, False on failure (fail-open).
     """
     try:
-        _validate_repo(repo)
+        scope_id = _resolve_scope_id(repo, user_id)
         client = _get_client()
 
         parts = [
@@ -124,7 +139,7 @@ def write_task_episode(
 
         client.create_event(
             memoryId=memory_id,
-            actorId=repo,
+            actorId=scope_id,
             sessionId=task_id,
             eventTimestamp=_iso_now(),
             payload=[
@@ -150,6 +165,7 @@ def write_repo_learnings(
     repo: str,
     task_id: str,
     learnings: str,
+    user_id: str = "",
 ) -> bool:
     """Write repository learnings to AgentCore Memory.
 
@@ -170,7 +186,7 @@ def write_repo_learnings(
     Returns True on success, False on failure (fail-open).
     """
     try:
-        _validate_repo(repo)
+        scope_id = _resolve_scope_id(repo, user_id)
         client = _get_client()
 
         learnings_text = f"Repository learnings: {learnings}"
@@ -181,7 +197,7 @@ def write_repo_learnings(
 
         client.create_event(
             memoryId=memory_id,
-            actorId=repo,
+            actorId=scope_id,
             sessionId=task_id,
             eventTimestamp=_iso_now(),
             payload=[

@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 def build_system_prompt(
     config: TaskConfig,
-    setup: RepoSetup,
+    setup: RepoSetup | None,
     hydrated_context: HydratedContext | None,
     overrides: str,
 ) -> str:
@@ -32,15 +32,23 @@ def build_system_prompt(
     system_prompt = system_prompt.replace("{repo_url}", config.repo_url)
     system_prompt = system_prompt.replace("{task_id}", config.task_id)
     system_prompt = system_prompt.replace("{workspace}", AGENT_WORKSPACE)
-    system_prompt = system_prompt.replace("{branch_name}", setup.branch)
-    system_prompt = system_prompt.replace("{default_branch}", setup.default_branch)
     system_prompt = system_prompt.replace("{max_turns}", str(config.max_turns))
-    setup_notes = (
-        "\n".join(f"- {n}" for n in setup.notes)
-        if setup.notes
-        else "All setup steps completed successfully."
-    )
-    system_prompt = system_prompt.replace("{setup_notes}", setup_notes)
+    if setup is not None:
+        system_prompt = system_prompt.replace("{branch_name}", setup.branch)
+        system_prompt = system_prompt.replace("{default_branch}", setup.default_branch)
+        setup_notes = (
+            "\n".join(f"- {n}" for n in setup.notes)
+            if setup.notes
+            else "All setup steps completed successfully."
+        )
+        system_prompt = system_prompt.replace("{setup_notes}", setup_notes)
+    else:
+        # Knowledge tasks have no repo setup
+        system_prompt = system_prompt.replace("{branch_name}", "(no branch)")
+        system_prompt = system_prompt.replace("{default_branch}", "(no branch)")
+        system_prompt = system_prompt.replace(
+            "{setup_notes}", "Knowledge task — no repository setup."
+        )
 
     # Inject memory context from orchestrator hydration
     memory_context_text = "(No previous knowledge available for this repository.)"

@@ -26,6 +26,9 @@ import type { TaskStatusType } from '../../constructs/task-status';
 /** Valid task types for task creation. */
 export type TaskType = 'new_task' | 'pr_iteration' | 'pr_review';
 
+/** Execution mode for a task — mirrors TaskMode in blueprint.ts. */
+export type TaskMode = 'coding' | 'knowledge';
+
 /**
  * Provenance of a task's submission. ``api`` covers CLI / Cognito-authenticated
  * submissions; ``webhook`` covers HMAC-signed inbound webhook submissions.
@@ -49,7 +52,12 @@ export interface TaskRecord {
   readonly task_id: string;
   readonly user_id: string;
   readonly status: TaskStatusType;
+  /** For coding tasks: 'owner/repo'. For knowledge tasks: blueprintId or construct id. */
   readonly repo: string;
+  /** Execution mode — 'coding' (default) or 'knowledge'. */
+  readonly task_mode?: TaskMode;
+  /** Blueprint ID from FilesystemRegistryService (e.g. 'coding/new-task-v1'). */
+  readonly blueprint_id?: string;
   readonly issue_number?: number;
   readonly task_type: TaskType;
   readonly pr_number?: number;
@@ -154,6 +162,8 @@ export interface TaskDetail {
   readonly task_id: string;
   readonly status: TaskStatusType;
   readonly repo: string;
+  readonly task_mode: TaskMode;
+  readonly blueprint_id: string | null;
   readonly issue_number: number | null;
   readonly task_type: TaskType;
   readonly pr_number: number | null;
@@ -330,6 +340,8 @@ export function toTaskDetail(record: TaskRecord): TaskDetail {
     prompt_version: record.prompt_version ?? null,
     trace: record.trace === true,
     trace_s3_uri: record.trace_s3_uri ?? null,
+    task_mode: record.task_mode ?? 'coding',
+    blueprint_id: record.blueprint_id ?? null,
   };
 }
 

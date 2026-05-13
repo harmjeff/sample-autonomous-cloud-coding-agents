@@ -948,12 +948,14 @@ export async function hydrateContext(task: TaskRecord, options?: HydrateContextO
     const tokenSecretArn = options?.githubTokenSecretArn ?? GITHUB_TOKEN_SECRET_ARN;
 
     const isPrTask = isPrTaskType(task.task_type as TaskType);
+    // Knowledge tasks skip all GitHub fetches — no repo or token required.
+    const isCodingTask = (task.task_mode ?? 'coding') === 'coding';
 
     // eslint-disable-next-line @cdklabs/promiseall-no-unbounded-parallelism
     const [issueResult, memoryResult, prResult] = await Promise.all([
-      // Issue fetch (skip for PR task types)
+      // Issue fetch (skip for PR tasks and knowledge tasks)
       (async () => {
-        if (isPrTask) return undefined;
+        if (isPrTask || !isCodingTask) return undefined;
         if (task.issue_number !== undefined && tokenSecretArn) {
           try {
             const token = await resolveGitHubToken(tokenSecretArn);
@@ -970,9 +972,9 @@ export async function hydrateContext(task: TaskRecord, options?: HydrateContextO
       memoryId
         ? loadMemoryContext(memoryId, task.repo, task.task_description)
         : Promise.resolve(undefined),
-      // PR fetch (only for PR task types)
+      // PR fetch (only for coding PR task types)
       (async () => {
-        if (isPrTask && task.pr_number !== undefined && tokenSecretArn) {
+        if (isPrTask && isCodingTask && task.pr_number !== undefined && tokenSecretArn) {
           try {
             const token = await resolveGitHubToken(tokenSecretArn);
             return await fetchGitHubPullRequest(task.repo, task.pr_number, token) ?? undefined;

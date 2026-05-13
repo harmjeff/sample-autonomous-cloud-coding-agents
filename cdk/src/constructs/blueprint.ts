@@ -28,16 +28,34 @@ const DOMAIN_PATTERN = /^(\*\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9
 /**
  * Properties for the Blueprint construct.
  */
+/** Determines the execution mode for tasks using this blueprint. */
+export type TaskMode = 'coding' | 'knowledge';
+
 export interface BlueprintProps {
   /**
    * Repository identifier in "owner/repo" format.
+   * Required for coding blueprints; omit for knowledge blueprints.
    */
-  readonly repo: string;
+  readonly repo?: string;
 
   /**
    * The shared RepoTable DynamoDB table.
    */
   readonly repoTable: dynamodb.ITable;
+
+  /**
+   * Blueprint ID from the FilesystemRegistryService (e.g. 'coding/new-task-v1').
+   * When set, the agent loads the full blueprint YAML from the registry mount.
+   */
+  readonly blueprintId?: string;
+
+  /**
+   * Task execution mode.
+   * coding    → repo required; git setup; GitHub context hydration; build/lint hooks.
+   * knowledge → repo optional; no git scaffolding; context from instructions + memory only.
+   * @default 'coding'
+   */
+  readonly taskMode?: TaskMode;
 
   /**
    * Compute strategy configuration.
@@ -150,19 +168,35 @@ export class Blueprint extends Construct {
     this.egressAllowlist = [...(props.networking?.egressAllowlist ?? [])];
     this.cedarPolicies = [...(props.security?.cedarPolicies ?? [])];
 
-    // Validate repo format at construct time
-    this.node.addValidation(new RepoFormatValidation(props.repo));
+    const taskMode: TaskMode = props.taskMode ?? 'coding';
+
+    // Validate repo format only for coding blueprints
+    if (taskMode === 'coding') {
+      if (!props.repo) {
+        this.node.addValidation({ validate: () => ['repo is required for coding blueprints'] });
+      } else {
+        this.node.addValidation(new RepoFormatValidation(props.repo));
+      }
+    }
     this.node.addValidation(new DomainFormatValidation(this.egressAllowlist));
 
     const now = new Date().toISOString();
 
+    // Use repo for coding blueprints; blueprintId as key for knowledge blueprints
+    const recordKey = props.repo ?? props.blueprintId ?? id;
+
     // Build the DynamoDB item for PutItem
     const item: Record<string, unknown> = {
-      repo: { S: props.repo },
+      repo: { S: recordKey },
       status: { S: 'active' },
       onboarded_at: { S: now },
       updated_at: { S: now },
+      task_mode: { S: taskMode },
     };
+
+    if (props.blueprintId) {
+      item.blueprint_id = { S: props.blueprintId };
+    }
 
     if (props.compute?.type) {
       item.compute_type = { S: props.compute.type };
@@ -200,14 +234,14 @@ export class Blueprint extends Construct {
           TableName: props.repoTable.tableName,
           Item: item,
         },
-        physicalResourceId: cr.PhysicalResourceId.of(`blueprint-${props.repo}`),
+        physicalResourceId: cr.PhysicalResourceId.of(`blueprint-${recordKey}`),
       },
       onUpdate: {
         service: 'DynamoDB',
         action: 'updateItem',
         parameters: {
           TableName: props.repoTable.tableName,
-          Key: { repo: { S: props.repo } },
+          Key: { repo: { S: recordKey } },
           UpdateExpression: `SET #status = :active, #updated = :now${this.buildUpdateFields(props)}`,
           ExpressionAttributeNames: {
             '#status': 'status',
@@ -220,14 +254,14 @@ export class Blueprint extends Construct {
             ...this.buildExpressionValues(props),
           },
         },
-        physicalResourceId: cr.PhysicalResourceId.of(`blueprint-${props.repo}`),
+        physicalResourceId: cr.PhysicalResourceId.of(`blueprint-${recordKey}`),
       },
       onDelete: {
         service: 'DynamoDB',
         action: 'updateItem',
         parameters: {
           TableName: props.repoTable.tableName,
-          Key: { repo: { S: props.repo } },
+          Key: { repo: { S: recordKey } },
           UpdateExpression: 'SET #status = :removed, #updated = :now, #ttl = :ttl',
           ExpressionAttributeNames: {
             '#status': 'status',
@@ -252,6 +286,8 @@ export class Blueprint extends Construct {
 
   private buildUpdateFields(props: BlueprintProps): string {
     const fields: string[] = [];
+    fields.push(', #task_mode = :task_mode');
+    if (props.blueprintId) fields.push(', #blueprint_id = :blueprint_id');
     if (props.compute?.type) fields.push(', #compute_type = :compute_type');
     if (props.compute?.runtimeArn) fields.push(', #runtime_arn = :runtime_arn');
     if (props.agent?.modelId) fields.push(', #model_id = :model_id');
@@ -266,6 +302,8 @@ export class Blueprint extends Construct {
 
   private buildExpressionNames(props: BlueprintProps): Record<string, string> {
     const names: Record<string, string> = {};
+    names['#task_mode'] = 'task_mode';
+    if (props.blueprintId) names['#blueprint_id'] = 'blueprint_id';
     if (props.compute?.type) names['#compute_type'] = 'compute_type';
     if (props.compute?.runtimeArn) names['#runtime_arn'] = 'runtime_arn';
     if (props.agent?.modelId) names['#model_id'] = 'model_id';
@@ -280,6 +318,8 @@ export class Blueprint extends Construct {
 
   private buildExpressionValues(props: BlueprintProps): Record<string, unknown> {
     const values: Record<string, unknown> = {};
+    values[':task_mode'] = { S: props.taskMode ?? 'coding' };
+    if (props.blueprintId) values[':blueprint_id'] = { S: props.blueprintId };
     if (props.compute?.type) values[':compute_type'] = { S: props.compute.type };
     if (props.compute?.runtimeArn) values[':runtime_arn'] = { S: props.compute.runtimeArn };
     if (props.agent?.modelId) values[':model_id'] = { S: props.agent.modelId };
