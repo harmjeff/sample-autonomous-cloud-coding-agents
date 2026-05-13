@@ -43,14 +43,19 @@ RUN npm install -g npm@latest && \
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 # Install Python dependencies via uv
-COPY pyproject.toml uv.lock /app/
+COPY agent/pyproject.toml agent/uv.lock /app/
 RUN uv sync --frozen --no-dev --directory /app
 
-# Copy agent code (ARG busts cache so file edits are always picked up)
+# Copy agent code and blueprint registry.
+# Build context is repo root (set in agent.ts) so blueprints/ is accessible.
+# ARG busts cache so file edits are always picked up.
 ARG CACHE_BUST=0
-COPY src/ /app/src/
-COPY prepare-commit-msg.sh /app/
-COPY test_sdk_smoke.py test_subprocess_threading.py /app/
+COPY agent/src/ /app/src/
+COPY agent/prepare-commit-msg.sh /app/
+COPY agent/test_sdk_smoke.py agent/test_subprocess_threading.py /app/
+# Blueprint YAML files — loaded at runtime by FilesystemRegistryService.
+# BLUEPRINTS_DIR env var points to /app/blueprints (set in CDK stack).
+COPY blueprints/ /app/blueprints/
 
 # Create non-root user (Claude Code CLI refuses bypassPermissions as root)
 RUN useradd -m -s /bin/bash agent && \

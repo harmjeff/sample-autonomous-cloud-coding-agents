@@ -272,6 +272,7 @@ def run_task(
     """
     from opentelemetry.trace import StatusCode
 
+    from blueprint_tracker import BlueprintTracker, load_blueprint_for_task
     from repo import setup_repo
 
     # Build config
@@ -444,6 +445,33 @@ def run_task(
 
             system_prompt = build_system_prompt(config, setup, hc, system_prompt_overrides)
 
+            # ----------------------------------------------------------------
+            # Blueprint phase tracking + PatternEvaluator (Phase D)
+            # Load blueprint for this task_type; inject its system_prompt and
+            # create a per-task BlueprintTracker wired into the hook system.
+            # Fail-open: if no blueprint found, agent runs with default prompt.
+            # ----------------------------------------------------------------
+            blueprint = load_blueprint_for_task(config.task_type)
+            bp_tracker: BlueprintTracker | None = None
+            if blueprint and blueprint.system_prompt.strip():
+                # Render blueprint parameters into system_prompt placeholders
+                bp_system_prompt = blueprint.system_prompt
+                for k, v in blueprint.parameters.items():
+                    bp_system_prompt = bp_system_prompt.replace(f"{{{k}}}", str(v))
+                # Substitute runtime values
+                bp_system_prompt = (
+                    bp_system_prompt.replace("{repo_url}", config.repo_url or "")
+                    .replace("{task_id}", config.task_id)
+                    .replace("{branch_name}", setup.branch if setup else "")
+                    .replace("{default_branch}", setup.default_branch if setup else "")
+                    .replace("{max_turns}", str(config.max_turns))
+                    .replace("{workspace}", AGENT_WORKSPACE)
+                )
+                # Append blueprint system_prompt as additional instructions
+                system_prompt = system_prompt + "\n\n" + bp_system_prompt
+                bp_tracker = BlueprintTracker(blueprint, config.task_id, config.task_type)
+                log("TASK", f"Blueprint loaded: {blueprint.id} (phase={bp_tracker.current_phase})")
+
             # Run agent
             disk_before = get_disk_usage(AGENT_WORKSPACE)
             start_time = time.time()
@@ -461,6 +489,23 @@ def run_task(
                     f"uvloop detected ({policy_name}) — this may cause subprocess "
                     f"SIGCHLD conflicts with the Claude Agent SDK",
                 )
+            # Register blueprint hooks (Phase D) — wires phase tracking and
+            # PatternEvaluator into the hook system for this task.
+            import hooks as _hooks
+
+            _blueprint_between_turns_hook = None
+            _blueprint_post_tool_hook = None
+            if bp_tracker is not None:
+
+                def _blueprint_between_turns_hook(ctx: dict) -> list[str]:
+                    return bp_tracker.evaluate_and_inject(ctx)
+
+                def _blueprint_post_tool_hook(tn: str, ti: dict, to: str) -> None:
+                    bp_tracker.on_tool_use(tn, ti, to)
+
+                _hooks.between_turns_hooks.append(_blueprint_between_turns_hook)
+                _hooks._post_tool_use_hooks.append(_blueprint_post_tool_hook)
+
             with task_span("task.agent_execution") as agent_span:
                 try:
                     agent_result = asyncio.run(
@@ -477,6 +522,13 @@ def run_task(
                     agent_span.set_status(StatusCode.ERROR, str(e))
                     agent_span.record_exception(e)
                     agent_result = AgentResult(status="error", error=str(e))
+                finally:
+                    # Remove blueprint hooks so they don't carry over to
+                    # subsequent tasks in the same process (AgentCore reuse).
+                    if _blueprint_between_turns_hook in _hooks.between_turns_hooks:
+                        _hooks.between_turns_hooks.remove(_blueprint_between_turns_hook)
+                    if _blueprint_post_tool_hook in _hooks._post_tool_use_hooks:
+                        _hooks._post_tool_use_hooks.remove(_blueprint_post_tool_hook)
             progress.write_agent_milestone(
                 "agent_execution_complete",
                 f"status={agent_result.status} turns={agent_result.turns}",

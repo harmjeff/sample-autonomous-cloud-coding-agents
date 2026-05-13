@@ -72,6 +72,8 @@ ignore = [
 "src/backends/ltm/mock.py" = ["RUF002", "B007", "E501"]
 "src/ltm_memory/recall.py" = ["RUF002", "RUF003", "TC001"]
 "src/ltm_memory/lifecycle.py" = ["RUF002", "RUF003"]
+"src/blueprint_tracker.py" = ["S110", "E501"]
+"src/pattern_evaluator.py" = ["F841", "B905", "E501", "S324"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

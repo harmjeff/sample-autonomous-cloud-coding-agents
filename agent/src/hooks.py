@@ -157,7 +157,35 @@ async def post_tool_use_hook(
             }
         }
 
+    # Blueprint tracker PostToolUse callback (Phase D).
+    # Registered by pipeline.py when a blueprint is loaded for the task.
+    # Fail-open: any exception in the tracker must never block tool execution.
+    tool_input = hook_input.get("tool_input", {})
+    if isinstance(tool_input, str):
+        try:
+            import json as _json
+
+            tool_input = _json.loads(tool_input)
+        except Exception:
+            tool_input = {}
+    for _post_hook in _post_tool_use_hooks:
+        try:
+            _post_hook(tool_name, tool_input, tool_response)
+        except Exception as exc:
+            log("DEBUG", f"PostToolUse callback failed (fail-open): {type(exc).__name__}: {exc}")
+
     return _PASS_THROUGH
+
+
+# ---------------------------------------------------------------------------
+# PostToolUse callback registry (Phase D blueprint tracking)
+# ---------------------------------------------------------------------------
+
+# A callback takes (tool_name, tool_input, tool_output) and returns nothing.
+# Used by BlueprintTracker to update state after each tool call.
+PostToolUseCallback = Callable[[str, dict, str], None]
+
+_post_tool_use_hooks: list[PostToolUseCallback] = []
 
 
 # ---------------------------------------------------------------------------

@@ -54,9 +54,14 @@ export class AgentStack extends Stack {
   constructor(scope: Construct, id: string, props: StackProps = {}) {
     super(scope, id, props);
 
+    // Build context is the repo root so Dockerfile can COPY blueprints/
+    // which lives at the same level as agent/. The Dockerfile is in agent/.
+    const repoRoot = path.join(__dirname, '..', '..', '..');
     const runnerPath = path.join(__dirname, '..', '..', '..', 'agent');
 
-    const artifact = agentcore.AgentRuntimeArtifact.fromAsset(runnerPath);
+    const artifact = agentcore.AgentRuntimeArtifact.fromAsset(repoRoot, {
+      file: 'agent/Dockerfile',
+    });
 
     // Task state persistence
     const taskTable = new TaskTable(this, 'TaskTable');
@@ -257,6 +262,9 @@ export class AgentStack extends Stack {
       //     and uv flocks that directory → must be local.
       MISE_DATA_DIR: '/tmp/mise-data',
       UV_CACHE_DIR: '/tmp/uv-cache',
+      // Blueprint registry path — the blueprints/ directory is bundled
+      // inside the agent Docker image at /app/blueprints.
+      BLUEPRINTS_DIR: '/app/blueprints',
       // Persistent mount (no flock):
       CLAUDE_CONFIG_DIR: '/mnt/workspace/.claude-config',
       npm_config_cache: '/mnt/workspace/.npm-cache',
