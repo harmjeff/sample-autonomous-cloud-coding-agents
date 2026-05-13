@@ -221,6 +221,19 @@ def _write_memory(
         )
 
     log("MEMORY", f"Memory write: episode={episode_ok}, learnings={learnings_ok}")
+
+    # Mem0 semantic write (A1 — dual backend, fail-open)
+    scope_id = config.repo_url or config.user_id or "unknown"
+    if self_feedback:
+        agent_memory.write_to_mem0(
+            scope_id=scope_id,
+            task_id=config.task_id,
+            content=self_feedback,
+            tags=[scope_id, config.task_type],
+            importance=0.8 if build_passed else 0.4,
+        )
+    agent_memory.run_mem0_lifecycle(scope_id=scope_id)
+
     return episode_ok or learnings_ok
 
 
@@ -327,6 +340,13 @@ def run_task(
 
             trajectory.set_truncation_callback(_on_trace_truncated)
         try:
+            # Mem0 semantic memory read (A1 — augments AgentCore Memory, fail-open)
+            scope_id = config.repo_url or config.user_id or "unknown"
+            mem0_knowledge = agent_memory.read_from_mem0(
+                scope_id=scope_id,
+                query=config.task_description or config.task_type,
+            )
+
             # Context hydration
             with task_span("task.context_hydration"):
                 if hydrated_context:
@@ -371,6 +391,14 @@ def run_task(
                         log("TASK", f"  Title: {config.issue.title}")
 
                     prompt = assemble_prompt(config)
+
+            # Append Mem0 semantic knowledge to prompt if available (fail-open)
+            if mem0_knowledge:
+                mem0_block = "\n\n## Additional semantic knowledge (Mem0)\n" + "\n".join(
+                    f"- {item}" for item in mem0_knowledge
+                )
+                prompt = prompt + mem0_block
+                log("MEMORY", f"Appended {len(mem0_knowledge)} Mem0 memories to prompt")
 
             # ----------------------------------------------------------------
             # Coding path: git/repo setup (skipped for knowledge tasks)

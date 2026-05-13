@@ -227,3 +227,100 @@ def write_repo_learnings(
 def _iso_now() -> str:
     """Return current time as ISO 8601 string."""
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+# ---------------------------------------------------------------------------
+# Mem0 LTM integration (A1 — dual backend)
+# ---------------------------------------------------------------------------
+
+_mem0_ltm = None
+
+
+def _get_mem0():  # -> Mem0LTM | None
+    """Lazy-init Mem0LTM from MEM0_URL env var. Returns None if not configured."""
+    global _mem0_ltm
+    if _mem0_ltm is not None:
+        return _mem0_ltm
+    url = os.environ.get("MEM0_URL", "")
+    if not url:
+        return None
+    try:
+        from backends.ltm.mem0 import Mem0LTM
+
+        _mem0_ltm = Mem0LTM(base_url=url, timeout=5.0)
+        return _mem0_ltm
+    except Exception as e:
+        print(f"[memory] WARN Mem0 init failed (fail-open): {e}", flush=True)
+        return None
+
+
+def write_to_mem0(
+    scope_id: str,
+    task_id: str,
+    content: str,
+    tags: list[str] | None = None,
+    importance: float = 0.7,
+) -> bool:
+    """Write a memory to Mem0 LTM. Fail-open — returns False on any error.
+
+    scope_id: repo for coding tasks, user_id for knowledge tasks.
+    Used for semantic knowledge that should persist across tasks.
+    """
+    ltm = _get_mem0()
+    if ltm is None:
+        return False
+    try:
+        from interfaces.ltm import MemoryCategory, MemoryMetadata
+
+        metadata = MemoryMetadata(
+            source="abca_agent",
+            agent_id="abca-coding-agent",
+            task_id=task_id,
+            importance_hint=importance,
+            tags=tags or [scope_id],
+            category=MemoryCategory.STABLE,
+        )
+        ltm.write(content=content, user_id=scope_id, metadata=metadata)
+        print("[memory] Mem0 write OK", flush=True)
+        return True
+    except Exception as e:
+        print(f"[memory] WARN Mem0 write failed (fail-open): {type(e).__name__}: {e}", flush=True)
+        return False
+
+
+def read_from_mem0(
+    scope_id: str,
+    query: str,
+    limit: int = 5,
+) -> list[str]:
+    """Read semantic memories from Mem0. Fail-open — returns [] on any error.
+
+    Returns a list of content strings ranked by relevance.
+    """
+    ltm = _get_mem0()
+    if ltm is None:
+        return []
+    try:
+        results = ltm.read(query=query, user_id=scope_id, limit=limit)
+        return [r.content for r in results if r.content]
+    except Exception as e:
+        print(f"[memory] WARN Mem0 read failed (fail-open): {type(e).__name__}: {e}", flush=True)
+        return []
+
+
+def run_mem0_lifecycle(scope_id: str) -> None:
+    """Run post-task decay + consolidation on Mem0. Fail-open."""
+    ltm = _get_mem0()
+    if ltm is None:
+        return
+    try:
+        from ltm_memory.lifecycle import MemoryLifecycleEngine
+
+        engine = MemoryLifecycleEngine()
+        engine.run_post_task(ltm=ltm, user_id=scope_id)
+        print("[memory] Mem0 lifecycle complete", flush=True)
+    except Exception as e:
+        print(
+            f"[memory] WARN Mem0 lifecycle failed (fail-open): {type(e).__name__}: {e}",
+            flush=True,
+        )

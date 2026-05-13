@@ -131,7 +131,9 @@ dependencies = [
     { name = "cedarpy" },
     { name = "claude-agent-sdk" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "mcp" },
+    { name = "pyyaml" },
     { name = "requests" },
     { name = "uvicorn" },
 ]
@@ -151,7 +153,9 @@ requires-dist = [
     { name = "cedarpy", specifier = ">=4.8.0" },
     { name = "claude-agent-sdk", specifier = "==0.1.53" },
     { name = "fastapi", specifier = "==0.135.2" },
+    { name = "httpx", specifier = ">=0.27.0" },
     { name = "mcp", specifier = "==1.23.0" },
+    { name = "pyyaml", specifier = ">=6.0" },
     { name = "requests", specifier = "==2.33.0" },
     { name = "uvicorn", specifier = "==0.42.0" },
 ]

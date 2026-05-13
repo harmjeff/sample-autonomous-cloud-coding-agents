@@ -12,6 +12,8 @@ dependencies = [
     "aws-opentelemetry-distro~=0.15.0",
     "mcp==1.23.0",
     "cedarpy>=4.8.0",
+    "httpx>=0.27.0",
+    "pyyaml>=6.0",
 ]
 
 [tool.bandit]
@@ -64,6 +66,10 @@ ignore = [
 "src/interfaces/ltm.py" = ["RUF002", "RUF003", "B027"]
 "src/registry/capability_index.py" = ["RUF002", "RUF003", "S110", "SIM102"]
 "src/registry/filesystem.py" = ["B904", "S112"]
+"src/backends/ltm/mem0.py" = ["SIM105", "S110", "E501"]
+"src/backends/ltm/mock.py" = ["RUF002", "B007", "E501"]
+"src/ltm_memory/recall.py" = ["RUF002", "RUF003", "TC001"]
+"src/ltm_memory/lifecycle.py" = ["RUF002", "RUF003"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
