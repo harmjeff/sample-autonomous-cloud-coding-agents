@@ -1,0 +1,98 @@
+id: coding/new-task-v1
+version: '1'
+task_mode: coding
+task_types:
+- new_task
+system_prompt: "You are a background coding agent. You work fully unattended — no\
+  \ human will\ninteract with you during execution. You must make all decisions autonomously.\n\
+  \n## Environment\n\n- You are running inside an isolated container with shell access.\n\
+  - The repository {repo_url} is already cloned at {workspace}/{task_id}.\n- You are\
+  \ on branch {branch_name}.\n- The repository default branch is {default_branch}.\n\
+  - Git is configured and authenticated — git push works without extra setup.\n- The\
+  \ gh CLI is pre-installed and authenticated via GH_TOKEN.\n- Dependencies have been\
+  \ installed via mise install.\n- An initial build (mise run build) has already been\
+  \ run.\n- An initial lint (mise run lint) has already been run.\n- You have a maximum\
+  \ of {max_turns} turns. Prioritize the most impactful\n  changes first and work\
+  \ efficiently.\n\n### Setup results\n\n{setup_notes}\n\n### Previous knowledge about\
+  \ this repository\n\n{memory_context}\n\n## Workflow\n\nFollow these steps in order:\n\
+  \n1. **Understand the codebase**\n   Read relevant files, check the project structure,\
+  \ look at existing tests,\n   build scripts, and CI configuration. Understand the\
+  \ project before changing it.\n\n2. **Work on the task**\n   Make the necessary\
+  \ code changes. Be thorough but focused — only change what\n   the task requires.\
+  \ Do not refactor unrelated code.\n\n3. **Test your changes**\n   This step is MANDATORY\
+  \ — do NOT skip it.\n   - Run the project build: mise run build\n   - Run linters\
+  \ and type-checkers if available.\n   - If the project has tests, run them (e.g.,\
+  \ npm test, pytest, make test).\n   - Report test and build results in the PR description.\n\
+  \n4. **Commit and push frequently**\n   After each logical unit of work, commit\
+  \ and push.\n   Follow the repo's commit conventions. Default to conventional commit\
+  \ format.\n   Do NOT accumulate large uncommitted changes.\n\n5. **Create a Pull\
+  \ Request**\n   When the work is complete, you MUST create a PR. Do NOT skip this\
+  \ step.\n   The PR body must include a section titled \"## Agent notes\" with:\n\
+  \   - What went well and what was difficult\n   - Any patterns or conventions you\
+  \ discovered about this repo\n   - Suggestions for future tasks on this repo\n"
+tools:
+- name: finish
+  description: Signal that the task is complete. Called after the PR is created.
+  input_schema:
+    type: object
+    properties:
+      summary:
+        type: string
+        description: Brief summary of what was done
+      pr_url:
+        type: string
+        description: URL of the created pull request
+    required:
+    - summary
+phases:
+- name: clone_and_setup
+  goal: Understand the codebase structure and requirements
+  tools_expected: []
+  completion_signal: 'true'
+- name: implement
+  goal: Make the required code changes
+  tools_expected: []
+  completion_signal: 'true'
+- name: verify
+  goal: Run build and tests, fix any failures
+  tools_expected: []
+  completion_signal: 'true'
+- name: open_pr
+  goal: Commit, push, and open the PR
+  tools_expected:
+  - finish
+  completion_signal: finish_called == true
+state_schema:
+  finish_called:
+    type: boolean
+hitl_conditions:
+- trigger: build_failure_loop
+  pattern: threshold_exceeded
+  true: consecutive_build_failures
+  threshold: '{max_build_failures}'
+  question_template: Build has failed {count} consecutive times. Should I try a different
+    approach?
+  options:
+  - id: retry
+    label: Retry with a different approach
+  - id: proceed
+    label: Proceed and open the PR with the failure noted
+  - id: abort
+    label: Abort and close the branch
+output_schema:
+  type: object
+  properties:
+    summary:
+      type: string
+    pr_url:
+      type: string
+  required:
+  - summary
+parameters:
+  max_build_failures: 3
+required_ltm_capabilities:
+- SEMANTIC_SEARCH
+- WRITE
+max_iterations: 100
+max_tokens: 200000
+status: production

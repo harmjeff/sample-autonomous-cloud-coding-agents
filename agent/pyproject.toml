@@ -60,6 +60,10 @@ ignore = [
 "src/system_prompt.py" = ["E501"]  # long prompt strings
 "src/prompts/*.py" = ["E501"]  # long prompt strings
 "tests/**" = ["S101", "S106", "S108", "E402"]  # assert; test tokens; /tmp paths; importorskip
+# AKW ported files: Unicode math in docstrings/comments, exception chaining patterns preserved
+"src/interfaces/ltm.py" = ["RUF002", "RUF003", "B027"]
+"src/registry/capability_index.py" = ["RUF002", "RUF003", "S110", "SIM102"]
+"src/registry/filesystem.py" = ["B904", "S112"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

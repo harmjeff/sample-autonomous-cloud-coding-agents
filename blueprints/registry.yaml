@@ -1,0 +1,97 @@
+blueprints:
+- id: coding/new-task-v1
+  version: '1'
+  status: production
+  task_mode: coding
+  task_types:
+  - new_task
+  required_tool_names: []
+  created_by: human
+  created_at: '2026-05-13T00:00:00Z'
+  updated_at: '2026-05-13T14:45:08.531401Z'
+- id: coding/pr-iteration-v1
+  version: '1'
+  status: production
+  task_mode: coding
+  task_types:
+  - pr_iteration
+  required_tool_names: []
+  created_by: human
+  created_at: '2026-05-13T00:00:00Z'
+  updated_at: '2026-05-13T00:00:00Z'
+- id: coding/pr-review-v1
+  version: '1'
+  status: production
+  task_mode: coding
+  read_only: true
+  task_types:
+  - pr_review
+  required_tool_names: []
+  created_by: human
+  created_at: '2026-05-13T00:00:00Z'
+  updated_at: '2026-05-13T00:00:00Z'
+- id: productivity/github-issues-v1
+  version: '1'
+  status: production
+  task_mode: knowledge
+  task_types:
+  - github_issues_summary
+  required_tool_names:
+  - fetch_github_issues
+  - categorise_issues
+  created_by: human
+  created_at: '2026-04-22T00:00:00Z'
+  updated_at: '2026-04-22T00:00:00Z'
+- id: research/web-research-v1
+  version: '1'
+  status: production
+  task_mode: knowledge
+  task_types:
+  - web_research
+  required_tool_names:
+  - web_search
+  created_by: human
+  created_at: '2026-04-21T00:00:00Z'
+  updated_at: '2026-04-21T00:00:00Z'
+- id: research/pubmed-v1
+  version: '1'
+  status: production
+  task_mode: knowledge
+  task_types:
+  - pubmed_research
+  - biomarker_analysis
+  required_tool_names:
+  - search_pubmed
+  created_by: human
+  created_at: '2026-04-21T00:00:00Z'
+  updated_at: '2026-04-21T00:00:00Z'
+- id: meta/memory-consolidation-v1
+  version: '1'
+  status: production
+  task_mode: knowledge
+  task_types:
+  - consolidate_memory
+  required_tool_names: []
+  created_by: human
+  created_at: '2026-04-28T00:00:00Z'
+  updated_at: '2026-04-28T00:00:00Z'
+- id: meta/blueprint-builder-v1
+  version: '1'
+  status: production
+  task_mode: knowledge
+  task_types:
+  - generate_blueprint
+  required_tool_names: []
+  created_by: human
+  created_at: '2026-04-22T00:00:00Z'
+  updated_at: '2026-04-22T00:00:00Z'
+- id: meta/tool-builder-v1
+  version: '1'
+  status: production
+  task_mode: knowledge
+  task_types:
+  - generate_tool
+  required_tool_names: []
+  created_by: human
+  created_at: '2026-04-22T00:00:00Z'
+  updated_at: '2026-04-22T00:00:00Z'

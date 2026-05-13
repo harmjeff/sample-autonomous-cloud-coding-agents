@@ -1,0 +1,207 @@
+id: research/pubmed-v1
+version: "1"
+task_mode: knowledge
+task_types:
+  - pubmed_research
+  - biomarker_analysis
+
+system_prompt: |
+  You are a biomedical research analyst. You work in three phases:
+
+  PHASE 1 — FILTER: Use search_pubmed to find papers. Use score_relevance for
+  each paper to assess relevance to the stated research interest. Only proceed
+  with papers scoring >= 0.5. Use read_memory to skip already-processed PMIDs.
+
+  PHASE 2 — EXTRACT: For each relevant paper, use extract_biomarkers to identify
+  named biomarkers (genes, proteins, metabolites, pathways) mentioned in the abstract.
+
+  PHASE 3 — OUTCOMES: For each biomarker found, use record_outcome to capture what
+  the paper reports about it. If two papers report contradictory effects for the same
+  biomarker, use flag_conflict. When all papers are processed, call finish with a summary.
+
+  PARAMETERS: minimum papers after filter = {min_papers_after_filter}
+
+tools:
+  - name: search_pubmed
+    description: Search PubMed for papers. Returns PMIDs, titles, abstracts, authors.
+    input_schema:
+      type: object
+      properties:
+        query: {type: string}
+        max_results: {type: integer, default: 20}
+        date_from: {type: string, description: "YYYY/MM/DD"}
+      required: [query]
+
+  - name: score_relevance
+    description: Score a paper abstract for relevance to the research interest (0.0-1.0).
+    input_schema:
+      type: object
+      properties:
+        pmid: {type: string}
+        title: {type: string}
+        abstract: {type: string}
+        score: {type: number, description: "0.0 (irrelevant) to 1.0 (highly relevant)"}
+        reason: {type: string}
+        domain: {type: string, description: "obesity_bmi | type_2_diabetes | neurological | other"}
+      required: [pmid, score, reason, domain]
+
+  - name: read_memory
+    description: Check long-term memory for already-processed PMIDs or prior research.
+    input_schema:
+      type: object
+      properties:
+        query: {type: string}
+      required: [query]
+
+  - name: extract_biomarkers
+    description: Extract named biomarkers from a paper abstract.
+    input_schema:
+      type: object
+      properties:
+        pmid: {type: string}
+        biomarkers:
+          type: array
+          items:
+            type: object
+            properties:
+              name: {type: string}
+              type: {type: string, description: "gene | protein | metabolite | pathway | other"}
+              context: {type: string}
+            required: [name, type, context]
+      required: [pmid, biomarkers]
+
+  - name: record_outcome
+    description: Record a biomarker→outcome association found in a paper.
+    input_schema:
+      type: object
+      properties:
+        biomarker: {type: string}
+        outcome: {type: string}
+        direction: {type: string, description: "increased | decreased | associated | no_effect | unclear"}
+        domain: {type: string}
+        pmid: {type: string}
+        confidence: {type: number, description: "0.0-1.0"}
+      required: [biomarker, outcome, direction, domain, pmid, confidence]
+
+  - name: flag_conflict
+    description: Flag a semantic conflict where the same biomarker has contradictory outcomes across papers.
+    input_schema:
+      type: object
+      properties:
+        biomarker: {type: string}
+        conflict_description: {type: string}
+        papers: {type: array, items: {type: string}}
+      required: [biomarker, conflict_description, papers]
+
+  - name: finish
+    description: Signal analysis is complete. Provide final summary and domains covered.
+    input_schema:
+      type: object
+      properties:
+        summary: {type: string}
+        domains_covered: {type: array, items: {type: string}}
+        total_papers_analyzed: {type: integer}
+        total_biomarkers_found: {type: integer}
+      required: [summary, domains_covered]
+
+phases:
+  - name: filter
+    goal: Search PubMed and score papers for relevance; retain papers scoring >= 0.5
+    tools_expected: [search_pubmed, score_relevance, read_memory]
+    completion_signal: papers_scored >= 1
+
+  - name: extract
+    goal: Extract biomarker entities from each retained paper
+    tools_expected: [extract_biomarkers]
+    completion_signal: papers_processed >= 1
+
+  - name: aggregate
+    goal: Record outcomes per biomarker; flag conflicts; produce final analysis
+    tools_expected: [record_outcome, flag_conflict, finish]
+    completion_signal: finish_called == true
+
+state_schema:
+  filtered_papers:
+    type: list
+    item_fields: [pmid, score, domain]
+  extracted_biomarkers:
+    type: list
+    item_fields: [name, type, pmid]
+  biomarker_outcomes:
+    type: list
+    item_fields: [biomarker, outcome, direction, domain, pmid, confidence]
+  flagged_conflicts:
+    type: list
+    item_fields: [biomarker, conflict_description, papers]
+  processed_pmids:
+    type: list
+  papers_scored: {type: integer}
+  papers_processed: {type: integer}
+
+hitl_conditions:
+  - trigger: direction_conflict
+    pattern: direction_conflict
+    on: biomarker_outcomes
+    group_by: [biomarker, domain]
+    conflict_field: direction
+    conflicting_pairs:
+      - [increased, decreased]
+      - [increased, no_effect]
+    question_template: "Conflicting outcomes for '{biomarker}' in '{domain}': {direction_a} (PMID:{pmid_a}) vs {direction_b} (PMID:{pmid_b}). How should this be handled?"
+    options:
+      - {id: include_both, label: "Include both findings, note the conflict"}
+      - {id: use_higher_conf, label: "Use higher-confidence finding only"}
+      - {id: skip, label: "Exclude this biomarker from results"}
+
+  - trigger: cross_domain_contradiction
+    pattern: cross_domain_contradiction
+    on: biomarker_outcomes
+    conflict_field: direction
+    conflicting_pairs:
+      - [increased, decreased]
+    min_domains: 2
+    question_template: "Cross-domain contradiction for '{biomarker}': {direction_a} in '{domain_a}' (PMID:{pmid_a}) vs {direction_b} in '{domain_b}' (PMID:{pmid_b}). This may reflect tissue-specific effects."
+    options:
+      - {id: report_both, label: "Report both with domain context"}
+      - {id: flag_as_uncertain, label: "Flag as uncertain"}
+
+  - trigger: low_corpus_quality
+    pattern: low_corpus_quality
+    on: filtered_papers
+    min_count: "{min_papers_after_filter}"
+    min_avg_score: 0.55
+    check_after_phase: filter
+    question_template: "Only {count} papers passed the relevance filter (avg score: {avg_score}). Minimum required: {min_count}. How should we proceed?"
+    options:
+      - {id: proceed, label: "Proceed with current corpus"}
+      - {id: expand_query, label: "Expand search queries and retry"}
+      - {id: abort, label: "Abort — corpus too thin"}
+
+  - trigger: semantic_conflict
+    question_template: "Conflict detected for '{biomarker}': {conflict_description}"
+    options:
+      - {id: include_both, label: "Include both findings, note the conflict"}
+      - {id: skip, label: "Exclude this biomarker from results"}
+
+output_schema:
+  type: object
+  properties:
+    summary: {type: string}
+    domains_covered: {type: array}
+  required: [summary]
+
+quality_checkpoints:
+  - name: min_papers_after_filter
+    condition: "papers_scored >= min_papers_after_filter"
+
+parameters:
+  min_papers_after_filter: 3
+
+required_ltm_capabilities:
+  - SEMANTIC_SEARCH
+  - ENTITY_LOOKUP
+  - RELATIONSHIP_GRAPH
+  - WRITE
+
+max_iterations: 40
+max_tokens: 100000

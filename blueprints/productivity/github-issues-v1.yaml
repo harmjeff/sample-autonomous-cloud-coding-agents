@@ -1,0 +1,123 @@
+id: productivity/github-issues-v1
+version: "1"
+task_mode: knowledge
+task_types:
+  - github_issues_summary
+
+system_prompt: |
+  You are a GitHub issues analyst. Your job is to summarise the open issues
+  in a GitHub repository, identify key themes, and surface action items.
+
+  PROCESS:
+  1. Call fetch_github_issues to retrieve open issues from the repository.
+     Parse the owner and repo from the instructions (format: "owner/repo").
+  2. Call categorise_issues to group issues by label, priority, or theme.
+  3. Call finish with a structured summary including:
+     - total open issues
+     - issues by category
+     - top 5 most critical/oldest issues
+     - recommended action items
+
+  PARAMETERS:
+  - max_issues: {max_issues}
+  - state_filter: {state_filter}
+
+  CONSTRAINTS:
+  - Always include PMID-equivalent issue numbers in your output
+  - Note when issues have been open > 30 days without activity
+  - Flag issues with no assignee as needing triage
+
+tools:
+  - name: fetch_github_issues
+    description: Fetch issues from a GitHub repository using the GitHub REST API.
+    input_schema:
+      type: object
+      properties:
+        owner: {type: string, description: GitHub repository owner}
+        repo: {type: string, description: GitHub repository name}
+        state: {type: string, enum: [open, closed, all], default: open}
+        max_results: {type: integer, default: 50}
+        labels: {type: string, description: "Comma-separated label filter"}
+      required: [owner, repo]
+
+  - name: categorise_issues
+    description: Group and analyse a set of GitHub issues by theme, label, and priority.
+    input_schema:
+      type: object
+      properties:
+        issues:
+          type: array
+          items:
+            type: object
+        grouping: {type: string, enum: [label, priority, theme, age], default: label}
+      required: [issues]
+
+  - name: finish
+    description: Signal analysis is complete with the structured summary.
+    input_schema:
+      type: object
+      properties:
+        summary: {type: string}
+        total_open: {type: integer}
+        categories: {type: object, description: "Dict of category -> list of issue numbers"}
+        top_critical: {type: array, items: {type: object}}
+        action_items: {type: array, items: {type: string}}
+        stale_issues: {type: array, description: "Issues open > 30 days without activity"}
+      required: [summary, total_open]
+
+phases:
+  - name: fetch
+    goal: Retrieve open issues from the repository
+    tools_expected: [fetch_github_issues]
+    completion_signal: issues_fetched == true
+
+  - name: analyse
+    goal: Categorise and prioritise the issues
+    tools_expected: [categorise_issues]
+    completion_signal: issues_categorised == true
+
+  - name: report
+    goal: Produce the final structured summary
+    tools_expected: [finish]
+    completion_signal: finish_called == true
+
+state_schema:
+  issues_fetched: {type: boolean}
+  issues_total: {type: integer}
+  issues_categorised: {type: boolean}
+  raw_issues: {type: list}
+
+hitl_conditions:
+  - trigger: high_issue_volume
+    pattern: threshold_exceeded
+    on: raw_issues
+    threshold: "{max_issues}"
+    question_template: "Repository has {count} open issues, exceeding the limit of {threshold}. Analyse all or only the most recent {threshold}?"
+    options:
+      - {id: analyse_all, label: "Analyse all issues (may be slow)"}
+      - {id: most_recent, label: "Analyse most recent {threshold} only"}
+      - {id: filter_labels, label: "Filter to specific labels first"}
+
+output_schema:
+  type: object
+  properties:
+    summary: {type: string}
+    total_open: {type: integer}
+    categories: {type: object}
+    action_items: {type: array}
+  required: [summary, total_open]
+
+quality_checkpoints:
+  - name: min_issues_fetched
+    condition: issues_total >= 1
+
+parameters:
+  max_issues: 50
+  state_filter: open
+
+required_ltm_capabilities:
+  - SEMANTIC_SEARCH
+  - WRITE
+
+max_iterations: 15
+max_tokens: 40000

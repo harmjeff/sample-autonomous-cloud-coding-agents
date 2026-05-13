@@ -1,0 +1,83 @@
+id: research/pubmed-gpr151-v1
+version: "1"
+task_types:
+  - pubmed_research
+  - biomarker_analysis
+
+approach: |
+  Three-phase structured analysis pipeline:
+
+  Phase 1 — Filter Papers:
+    Search PubMed for the target gene/receptor across specified disease domains.
+    Score each abstract for relevance. Retain papers scoring >= 0.5.
+    Check LTM to skip already-processed PMIDs.
+
+  Phase 2 — Biomarker Extraction:
+    For each retained abstract, extract named biomarkers (genes, proteins,
+    metabolites, signaling components). Write each as a Mem0 entity linked
+    to source papers.
+
+  Phase 3 — Outcome Aggregation:
+    For each extracted biomarker, aggregate reported outcomes across papers.
+    Build a biomarker → outcome map. Trigger HITL when conflicting outcomes
+    are reported for the same biomarker across different studies.
+
+agent_types:
+  - science_researcher
+
+required_tools:
+  - pubmed
+  - ltm_read
+  - ltm_write
+  - stm
+
+required_ltm_capabilities:
+  - SEMANTIC_SEARCH
+  - ENTITY_LOOKUP
+  - RELATIONSHIP_GRAPH
+  - WRITE
+
+output_shape:
+  biomarker_map: "dict[biomarker, list[{outcome, papers, confidence, domain}]]"
+  filtered_papers: list
+  summary: string
+  domains_covered: list
+
+quality_checkpoints:
+  - min_papers_after_filter: 5
+
+escalation_triggers:
+  - conflicting_outcomes_same_biomarker
+  - contradictory_directionality_across_domains
+
+max_iterations: 30
+max_tokens: 80000
+
+# Session 7 test configuration
+test_target:
+  gene: GPR151
+  domains:
+    - obesity_bmi
+    - type_2_diabetes
+    - neurological_disorders
+  rationale: >
+    GPR151 is a niche GPCR with active therapeutic interest. Loss-of-function
+    variants are associated with reduced BMI in GWAS studies. Its role in
+    habenular synaptic signaling (GABAergic/NPY pathways) creates a mechanistic
+    bridge between metabolic and neurological phenotypes — expected to produce
+    cross-domain biomarker conflicts that exercise the HITL trigger.
+  expected_biomarkers:
+    - NPY
+    - GABA
+    - insulin receptor substrate
+    - dopamine signaling components
+    - GPCR signaling pathway components
+  pubmed_queries:
+    - "GPR151"
+    - "GPR151 obesity BMI"
+    - "GPR151 diabetes metabolism"
+    - "GPR151 habenula"
+  corpus_notes: >
+    Broad 'GPR151' query returns ~36 papers — right-sized corpus for testing.
+    Notable: pain/nociception papers (GPR151 P2X3) will appear and test whether
+    the relevance filter correctly handles out-of-scope domains.

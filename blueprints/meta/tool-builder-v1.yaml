@@ -1,0 +1,188 @@
+id: meta/tool-builder-v1
+version: "1"
+task_mode: knowledge
+task_types:
+  - generate_tool
+
+system_prompt: |
+  You are the Tool Builder Agent. You are the only agent authorised to generate
+  new tools for the AutonomousKnowledgeWork platform.
+
+  PROCESS:
+  1. Call search_capability_index to check if a tool already exists for this need.
+     If a match is found with confidence >= 0.8, call finish with status=existing_match.
+
+  2. If no match, call generate_tool_code with the tool specification.
+     Never hardcode secrets — declare them in secrets_required.
+     All network access must be declared in network_allow_list.
+
+  3. Call test_in_sandbox with the generated code.
+     If tests fail, call generate_tool_code again with the failure context.
+     You have {max_generation_attempts} attempts.
+
+  4. If secrets are required and not yet registered:
+     Call request_secret_registration for each unregistered secret.
+     Execution will pause until a human provides the secret value.
+
+  5. Call register_tool once all tests pass and secrets are registered.
+
+  6. Call finish with status=registered and a summary.
+
+  CONSTRAINTS:
+  - Never hardcode credentials, tokens, or API keys in generated code
+  - Use os.getenv("SECRET_NAME") for all secrets
+  - Declare all required network endpoints in network_allow_list
+  - Generated code must subclass BaseTool exactly
+  - Handle rate limits (retry with backoff), timeouts, and auth errors
+  - Output must be JSON-serialisable
+
+tools:
+  - name: search_capability_index
+    description: Search existing tools by capability description. Returns matches with confidence scores.
+    input_schema:
+      type: object
+      properties:
+        description: {type: string, description: What the tool needs to do}
+        min_confidence: {type: number, default: 0.6}
+      required: [description]
+
+  - name: generate_tool_code
+    description: Generate a Python BaseTool implementation from a specification.
+    input_schema:
+      type: object
+      properties:
+        tool_name: {type: string}
+        capability_description: {type: string}
+        input_schema: {type: object}
+        output_schema: {type: object}
+        api_documentation: {type: string, description: API docs or spec to implement against}
+        secrets_required:
+          type: array
+          items:
+            type: object
+            properties:
+              name: {type: string}
+              description: {type: string}
+        network_allow_list:
+          type: array
+          items: {type: string, description: "hostname:port"}
+        previous_attempt_errors:
+          type: array
+          items: {type: string}
+      required: [tool_name, capability_description, input_schema, output_schema]
+
+  - name: test_in_sandbox
+    description: Submit generated tool code to the SandboxManager for testing.
+    input_schema:
+      type: object
+      properties:
+        tool_name: {type: string}
+        tool_code: {type: string}
+        test_cases:
+          type: array
+          items:
+            type: object
+            properties:
+              name: {type: string}
+              input: {type: object}
+              expect_error: {type: boolean, default: false}
+      required: [tool_name, tool_code, test_cases]
+
+  - name: request_secret_registration
+    description: >
+      Request a human to register a secret in the SecretManager.
+      Triggers HITL. Execution resumes once confirmed.
+    input_schema:
+      type: object
+      properties:
+        tool_id: {type: string}
+        secret_name: {type: string}
+        description: {type: string}
+        registration_instructions: {type: string}
+      required: [tool_id, secret_name, description]
+
+  - name: register_tool
+    description: Register a tested tool in the ToolRegistry and CapabilityIndex.
+    input_schema:
+      type: object
+      properties:
+        tool_name: {type: string}
+        tool_id: {type: string}
+        tool_code: {type: string}
+        capability_description: {type: string}
+        input_schema: {type: object}
+        output_schema: {type: object}
+        secrets_required: {type: array}
+        network_allow_list: {type: array}
+        test_results: {type: object}
+      required: [tool_name, tool_id, tool_code, capability_description, test_results]
+
+  - name: finish
+    description: Signal tool generation is complete.
+    input_schema:
+      type: object
+      properties:
+        tool_id: {type: string}
+        status: {type: string, enum: [registered, existing_match, failed]}
+        summary: {type: string}
+      required: [tool_id, status, summary]
+
+phases:
+  - name: search
+    goal: Check if a matching tool already exists
+    tools_expected: [search_capability_index]
+    completion_signal: search_complete == true
+
+  - name: generate
+    goal: Generate tool code and test it
+    tools_expected: [generate_tool_code, test_in_sandbox]
+    completion_signal: tests_passed == true
+
+  - name: register
+    goal: Handle secrets and register the tool
+    tools_expected: [request_secret_registration, register_tool, finish]
+    completion_signal: finish_called == true
+
+state_schema:
+  search_complete: {type: boolean}
+  generation_attempts: {type: integer}
+  tests_passed: {type: boolean}
+  generated_code: {type: string}
+  test_results: {type: object}
+  secrets_pending: {type: list}
+
+hitl_conditions:
+  - trigger: secret_registration_required
+    question_template: "Tool '{tool_id}' requires secret '{secret_name}': {description}. {registration_instructions}. Confirm once registered."
+    options:
+      - {id: registered, label: "Secret registered — continue"}
+      - {id: skip_secret, label: "Skip this secret (tool will run without it)"}
+      - {id: abort, label: "Abort tool generation"}
+
+  - trigger: generation_failed
+    pattern: threshold_exceeded
+    on: generation_attempts
+    threshold: "{max_generation_attempts}"
+    question_template: "Tool generation failed after {count} attempts. Last error: {last_error}"
+    options:
+      - {id: provide_docs, label: "Provide API documentation or spec"}
+      - {id: manual_build, label: "Build this tool manually"}
+      - {id: abort, label: "Abort — not achievable automatically"}
+
+output_schema:
+  type: object
+  properties:
+    tool_id: {type: string}
+    status: {type: string}
+    summary: {type: string}
+  required: [tool_id, status]
+
+parameters:
+  max_generation_attempts: 3
+
+required_ltm_capabilities:
+  - SEMANTIC_SEARCH
+  - WRITE
+
+max_iterations: 40
+max_tokens: 100000

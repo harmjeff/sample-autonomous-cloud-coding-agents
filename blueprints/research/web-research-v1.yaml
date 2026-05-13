@@ -1,0 +1,107 @@
+id: research/web-research-v1
+version: "1"
+task_mode: knowledge
+task_types:
+  - web_research
+
+system_prompt: |
+  You are a web research agent. Your job is to research a topic thoroughly.
+
+  PROCESS:
+  1. Call read_memory first to check what is already known about this topic.
+  2. Search the web iteratively using web_search until you have at least {min_sources} sources.
+  3. Save important findings with save_finding before finishing.
+  4. Call finish with a clear summary and key_findings list.
+
+  QUALITY BAR: Do not call finish until you have at least {min_sources} credible sources.
+
+tools:
+  - name: web_search
+    description: Search the web for information on a topic. Returns title, URL, and snippet.
+    input_schema:
+      type: object
+      properties:
+        query: {type: string, description: Search query}
+        num_results: {type: integer, default: 5}
+      required: [query]
+
+  - name: read_memory
+    description: Check long-term memory for prior research on this topic.
+    input_schema:
+      type: object
+      properties:
+        query: {type: string, description: What to look for in memory}
+      required: [query]
+
+  - name: save_finding
+    description: Save an important finding to long-term memory.
+    input_schema:
+      type: object
+      properties:
+        content: {type: string, description: The finding to save}
+        importance: {type: number, default: 0.7, description: Importance 0.0-1.0}
+      required: [content]
+
+  - name: finish
+    description: Signal that research is complete. Provide summary and key findings.
+    input_schema:
+      type: object
+      properties:
+        summary: {type: string}
+        key_findings: {type: array, items: {type: string}}
+      required: [summary, key_findings]
+
+phases:
+  - name: check_memory
+    goal: Check LTM for prior research
+    tools_expected: [read_memory]
+    completion_signal: memory_checked == true
+
+  - name: search
+    goal: Gather sufficient web sources
+    tools_expected: [web_search]
+    completion_signal: sources_count >= {min_sources}
+
+  - name: synthesize
+    goal: Save findings and produce summary
+    tools_expected: [save_finding, finish]
+    completion_signal: finish_called == true
+
+state_schema:
+  sources: {type: list}
+  sources_count: {type: integer}
+  memory_checked: {type: boolean}
+
+hitl_conditions:
+  - trigger: source_credibility_gap
+    pattern: source_credibility_gap
+    on: sources
+    min_sources: 3
+    credibility_check:
+      prefer_domains: ["*.edu", "*.gov", "pubmed.ncbi.nlm.nih.gov", "nature.com"]
+      flag_if_none_preferred: true
+    question_template: "No high-credibility sources found among {count} results. Proceed or retry with more specific queries?"
+    options:
+      - {id: proceed, label: "Proceed with current sources"}
+      - {id: retry, label: "Search for more authoritative sources"}
+
+output_schema:
+  type: object
+  properties:
+    summary: {type: string}
+    key_findings: {type: array, items: {type: string}}
+  required: [summary]
+
+quality_checkpoints:
+  - name: min_sources
+    condition: sources_count >= min_sources
+
+parameters:
+  min_sources: 3
+
+required_ltm_capabilities:
+  - SEMANTIC_SEARCH
+  - WRITE
+
+max_iterations: 25
+max_tokens: 40000

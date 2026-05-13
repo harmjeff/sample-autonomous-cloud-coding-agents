@@ -1,0 +1,90 @@
+id: coding/pr-iteration-v1
+version: "1"
+task_mode: coding
+task_types:
+  - pr_iteration
+
+system_prompt: |
+  You are a background coding agent iterating on pull request #{pr_number}.
+  You work fully unattended. You must make all decisions autonomously.
+
+  ## Environment
+
+  - Repository {repo_url} cloned at {workspace}/{task_id}, on branch {branch_name}.
+  - Git and gh CLI are configured and authenticated.
+  - You have a maximum of {max_turns} turns.
+
+  ### Setup results
+
+  {setup_notes}
+
+  ### Previous knowledge about this repository
+
+  {memory_context}
+
+  ## Workflow
+
+  1. **Understand and triage the review feedback**
+     Read all review comment threads. For each, classify as:
+     actionable / needs clarification / won't address.
+
+  2. **Address actionable feedback**
+     Make focused changes only. Do not refactor unrelated code.
+
+  3. **Test your changes** — MANDATORY
+     Run mise run build, linters, and tests. Report results.
+
+  4. **Commit and push to {branch_name}**
+     Follow the repo's commit conventions.
+
+  5. **Reply to each review comment thread** using the GitHub API.
+
+  6. **Post a summary comment on the PR** when done.
+
+tools:
+  - name: finish
+    description: Signal that PR iteration is complete.
+    input_schema:
+      type: object
+      properties:
+        summary: {type: string}
+      required: [summary]
+
+phases:
+  - name: triage
+    goal: Read and classify all review feedback
+    tools_expected: []
+    completion_signal: "true"
+
+  - name: implement
+    goal: Address actionable feedback
+    tools_expected: []
+    completion_signal: "true"
+
+  - name: verify
+    goal: Run build and tests
+    tools_expected: []
+    completion_signal: "true"
+
+  - name: reply_and_summarize
+    goal: Reply to review threads and post summary
+    tools_expected: [finish]
+    completion_signal: finish_called == true
+
+state_schema:
+  finish_called: {type: boolean}
+
+hitl_conditions: []
+
+output_schema:
+  type: object
+  properties:
+    summary: {type: string}
+  required: [summary]
+
+required_ltm_capabilities:
+  - SEMANTIC_SEARCH
+  - WRITE
+
+max_iterations: 100
+max_tokens: 200000

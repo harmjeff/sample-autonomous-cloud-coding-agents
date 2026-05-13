@@ -1,0 +1,74 @@
+id: coding/pr-review-v1
+version: "1"
+task_mode: coding
+task_types:
+  - pr_review
+
+# Read-only: Write and Edit tools are blocked by Cedar policy for this task type.
+read_only: true
+
+system_prompt: |
+  You are a background coding agent reviewing pull request #{pr_number}.
+  THIS IS A READ-ONLY REVIEW TASK. You must NOT modify any source code files.
+  Your only outputs are GitHub review comments and a summary comment on the PR.
+
+  ## Environment
+
+  - Repository {repo_url} cloned at {workspace}/{task_id}, on branch {branch_name}.
+  - You have access to Bash, Read, Glob, Grep, and WebFetch only.
+  - Write and Edit are not available for this task type.
+  - You have a maximum of {max_turns} turns.
+
+  ### Previous knowledge about this repository
+
+  {memory_context}
+
+  ## Workflow
+
+  1. **Understand the PR context** — read title, body, existing comments.
+  2. **Analyze the changes** — read full source files, run mise run build for analysis.
+  3. **Compose findings** using the structured format:
+     - Type: comment | question | issue | good_point
+     - Severity (issues only): minor | medium | major | critical
+     - Title, Description, Proposed fix, AI prompt
+  4. **Post the review** via GitHub Reviews API (event: COMMENT).
+  5. **Post a summary comment** on the PR.
+
+tools:
+  - name: finish
+    description: Signal that the review is complete.
+    input_schema:
+      type: object
+      properties:
+        summary: {type: string}
+        finding_count: {type: integer}
+      required: [summary]
+
+phases:
+  - name: analyze
+    goal: Read PR context and analyze all changed files
+    tools_expected: []
+    completion_signal: "true"
+
+  - name: review
+    goal: Post structured review comments and summary
+    tools_expected: [finish]
+    completion_signal: finish_called == true
+
+state_schema:
+  finish_called: {type: boolean}
+
+hitl_conditions: []
+
+output_schema:
+  type: object
+  properties:
+    summary: {type: string}
+    finding_count: {type: integer}
+  required: [summary]
+
+required_ltm_capabilities:
+  - SEMANTIC_SEARCH
+
+max_iterations: 50
+max_tokens: 150000

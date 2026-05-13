@@ -1,0 +1,181 @@
+id: meta/memory-consolidation-v1
+version: "1"
+task_mode: knowledge
+status: production
+task_types:
+  - consolidate_memory
+
+system_prompt: |
+  You are the Deep Consolidation Agent. Your job is to reason across the full
+  memory store for a user and improve its quality — not just deduplicate, but
+  synthesize cross-memory patterns into new durable knowledge.
+
+  You complement the deterministic MemoryLifecycleEngine (which handles routine
+  decay and near-duplicate merging). Your job is higher-order reasoning:
+  identifying patterns, resolving contradictions, and inferring stable facts
+  from a collection of weaker signals.
+
+  PROCESS:
+
+  Phase 1 — SURVEY
+  Call read_all_memories to load the full memory store.
+  Identify: clusters of related memories, contradictions, patterns that repeat
+  across multiple memories, and stale/low-value entries.
+
+  Phase 2 — SYNTHESIZE
+  For each identified pattern or inferred fact:
+    - Call write_synthetic_memory with: the synthesized statement, your rationale,
+      the source memory IDs it was derived from, and an appropriate importance score.
+    - High confidence patterns (seen 3+ times consistently): importance=0.9
+    - Moderate patterns (2 signals, no contradiction): importance=0.75
+    - Speculative inferences (1 signal, uncertain): importance=0.5
+
+  For contradictions:
+    - Prefer the more recent memory (check created_at).
+    - Write a synthetic memory that resolves the contradiction with explanation.
+    - Call forget_memory on the older, superseded entry.
+
+  Phase 3 — REPORT
+  Call finish with a structured ConsolidationReport:
+    - synthetic_memories_written: count of new synthetic memories
+    - memories_deprecated: count of forgotten entries
+    - patterns_identified: list of pattern descriptions
+    - contradictions_found: list of contradiction descriptions with resolution
+    - summary: 2-3 sentence prose summary of what you found
+
+  CONSTRAINTS:
+  - Only call forget_memory on entries you are replacing with a synthetic memory.
+    Do not delete memories just because they are old — use the decay engine for that.
+  - Write synthetic memories in first-person factual style, not "the user said X".
+    Example: "Jeff prefers blueprint-driven agents over hardcoded specialist agents."
+  - Do not fabricate. Every synthetic memory must cite source_memory_ids.
+  - Maximum {max_synthetic_memories} synthetic memories per run.
+
+tools:
+  - name: read_all_memories
+    description: Read the full memory store for the user. Call once at the start of the survey phase.
+    input_schema:
+      type: object
+      properties:
+        query:
+          type: string
+          default: "memory"
+          description: Seed query — use broad terms to maximise recall
+        limit:
+          type: integer
+          default: 100
+          description: Maximum memories to load
+      required: []
+
+  - name: write_synthetic_memory
+    description: Write a new synthetic memory derived by reasoning across source memories.
+    input_schema:
+      type: object
+      properties:
+        content:
+          type: string
+          description: The synthesized statement (first-person factual)
+        rationale:
+          type: string
+          description: Explain what source signals led to this inference
+        importance:
+          type: number
+          default: 0.8
+          description: 0.0–1.0 confidence in this inference
+        source_memory_ids:
+          type: array
+          items: {type: string}
+          description: IDs of source memories this was derived from
+      required: [content, rationale]
+
+  - name: forget_memory
+    description: Delete a memory that is superseded by a synthetic memory you just wrote.
+    input_schema:
+      type: object
+      properties:
+        memory_id:
+          type: string
+          description: ID of the memory to delete
+        reason:
+          type: string
+          description: Why this memory is being removed
+      required: [memory_id, reason]
+
+  - name: finish
+    description: Submit the ConsolidationReport and signal completion.
+    input_schema:
+      type: object
+      properties:
+        synthetic_memories_written:
+          type: integer
+        memories_deprecated:
+          type: integer
+        patterns_identified:
+          type: array
+          items: {type: string}
+        contradictions_found:
+          type: array
+          items: {type: string}
+        summary:
+          type: string
+      required: [synthetic_memories_written, memories_deprecated, summary]
+
+phases:
+  - name: survey
+    goal: Load and analyse the full memory store
+    tools_expected: [read_all_memories]
+    completion_signal: survey_complete == true
+
+  - name: synthesize
+    goal: Write synthetic memories for identified patterns and resolve contradictions
+    tools_expected: [write_synthetic_memory, forget_memory]
+    completion_signal: synthesis_complete == true
+
+  - name: report
+    goal: Submit the ConsolidationReport
+    tools_expected: [finish]
+    completion_signal: finish_called == true
+
+state_schema:
+  survey_complete: {type: boolean}
+  memories_loaded: {type: integer}
+  synthesis_complete: {type: boolean}
+  synthetic_count: {type: integer}
+  deprecated_count: {type: integer}
+
+hitl_conditions:
+  - trigger: large_deprecation_batch
+    pattern: threshold_exceeded
+    on: deprecated_count
+    threshold: "{max_safe_deprecations}"
+    question_template: "Consolidation agent is about to deprecate {count} memories. Review before proceeding."
+    options:
+      - {id: approve, label: "Approve deprecations — continue"}
+      - {id: skip_deprecations, label: "Skip deprecations — keep all memories"}
+      - {id: abort, label: "Abort consolidation run"}
+
+output_schema:
+  type: object
+  properties:
+    synthetic_memories_written: {type: integer}
+    memories_deprecated: {type: integer}
+    patterns_identified:
+      type: array
+      items: {type: string}
+    contradictions_found:
+      type: array
+      items: {type: string}
+    summary: {type: string}
+  required: [synthetic_memories_written, memories_deprecated, summary]
+
+parameters:
+  max_synthetic_memories: 20
+  max_safe_deprecations: 10
+
+required_ltm_capabilities:
+  - SEMANTIC_SEARCH
+  - ENTITY_LOOKUP
+  - WRITE
+
+max_iterations: 60
+max_tokens: 150000
