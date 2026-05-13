@@ -1,8 +1,6 @@
-ARG TARGETPLATFORM=linux/arm64
+FROM --platform=linux/arm64 jdxcode/mise:latest AS mise
 
-FROM --platform=$TARGETPLATFORM jdxcode/mise:latest AS mise
-
-FROM --platform=$TARGETPLATFORM python:3.13-slim
+FROM --platform=linux/arm64 python:3.13-slim
 
 # Install mise (polyglot dev tool manager)
 COPY --from=mise /usr/local/bin/mise /usr/local/bin/mise

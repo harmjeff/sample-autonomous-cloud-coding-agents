@@ -95,7 +95,7 @@ export class AgentStack extends Stack {
 
     // --- Repository onboarding ---
     const agentPluginsBlueprint = new Blueprint(this, 'AgentPluginsBlueprint', {
-      repo: 'krokoko/agent-plugins',
+      repo: '0x4765654b/bad_idea',
       repoTable: repoTable.table,
     });
 
