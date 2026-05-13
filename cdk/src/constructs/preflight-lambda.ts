@@ -121,6 +121,10 @@ export class PreflightLambda extends Construct {
         id: 'AwsSolutions-IAM4',
         reason: 'AWSLambdaBasicExecutionRole is required for CloudWatch Logs access',
       },
+      {
+        id: 'AwsSolutions-L1',
+        reason: 'PYTHON_3_13 is the latest supported Python runtime for Lambda ARM64',
+      },
     ], true);
   }
 
