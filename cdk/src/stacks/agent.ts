@@ -48,6 +48,7 @@ import { TaskOrchestrator } from '../constructs/task-orchestrator';
 import { TaskTable } from '../constructs/task-table';
 import { TraceArtifactsBucket } from '../constructs/trace-artifacts-bucket';
 import { UserConcurrencyTable } from '../constructs/user-concurrency-table';
+import { PreflightLambda } from '../constructs/preflight-lambda';
 import { WebhookTable } from '../constructs/webhook-table';
 
 export class AgentStack extends Stack {
@@ -479,6 +480,18 @@ export class AgentStack extends Stack {
     // Grant the orchestrator Lambda read+write access to memory
     // (reads during context hydration, writes for fallback episodes)
     agentMemory.grantReadWrite(orchestrator.fn);
+
+    // --- Pre-flight Lambda (Python 3.13 ARM64) ---
+    // Runs the AKW preflight pipeline (readiness → hydration → risk → admission).
+    // The orchestrator will invoke this via Lambda.invoke() in a subsequent step.
+    // Wiring into orchestrate-task.ts is deferred to the next merge phase.
+    const preflightLambda = new PreflightLambda(this, 'PreflightLambda', {
+      extraEnv: {
+        AWS_ACCOUNT_REGION: process.env.AWS_REGION ?? 'us-east-1',
+      },
+    });
+    // Grant the orchestrator permission to invoke the preflight function.
+    preflightLambda.grantInvoke(orchestrator.fn);
 
     // --- Concurrency counter reconciler (drift correction) ---
     new ConcurrencyReconciler(this, 'ConcurrencyReconciler', {

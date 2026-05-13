@@ -73,7 +73,13 @@ ignore = [
 "src/ltm_memory/recall.py" = ["RUF002", "RUF003", "TC001"]
 "src/ltm_memory/lifecycle.py" = ["RUF002", "RUF003"]
 "src/blueprint_tracker.py" = ["S110", "E501"]
+# AKW ported preflight files: broad exception handling (fail-open), dataclass shims, Any typing
+"src/preflight/pipeline.py" = ["B904", "S110"]
+"src/preflight/handler.py" = ["S110", "B904"]
 "src/pattern_evaluator.py" = ["F841", "B905", "E501", "S324"]
+# AKW ported sandbox files: subprocess execution patterns, broad exception handling, dynamic code execution
+"src/sandbox/sandbox_manager.py" = ["S603", "S607", "S102", "S110", "B904"]
+"src/sandbox/secret_manager.py" = ["B007"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
