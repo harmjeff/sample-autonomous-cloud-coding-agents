@@ -80,6 +80,9 @@ ignore = [
 # AKW ported sandbox files: subprocess execution patterns, broad exception handling, dynamic code execution
 "src/sandbox/sandbox_manager.py" = ["S603", "S607", "S102", "S110", "B904"]
 "src/sandbox/secret_manager.py" = ["B007"]
+# AKW ported blueprint builder files: broad exception handling (fail-open), dynamic YAML construction
+"src/agents/blueprint_builder/agent.py" = ["S110", "B904"]
+"src/tools/blueprint_builder_tools.py" = ["S110", "B904"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

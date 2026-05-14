@@ -472,6 +472,85 @@ def run_task(
                 bp_tracker = BlueprintTracker(blueprint, config.task_id, config.task_type)
                 log("TASK", f"Blueprint loaded: {blueprint.id} (phase={bp_tracker.current_phase})")
 
+            # ----------------------------------------------------------------
+            # Phase C1 — ToolBuilderAgent local tool handlers
+            # When the task type is 'generate_tool', build the ToolBuilderAgent
+            # and register its tool implementations as local_tool_handlers.
+            #
+            # TODO (Phase C1 full wiring): Pass local_tool_handlers to
+            # BlueprintTracker so it can intercept Claude Agent SDK tool calls
+            # and route them to these Python callables, returning synthetic
+            # ToolResult messages. The interception requires a pre-tool-use
+            # hook that denies the SDK's tool execution and injects the result
+            # as a ToolResultBlock. See blueprint_tracker.py for the hook
+            # protocol. Until the pre-tool hook is wired, the SDK will attempt
+            # to call the tool spec tools (which are defined in the blueprint
+            # but not registered as MCP tools), and the agent will complete
+            # via its system_prompt reasoning.
+            # ----------------------------------------------------------------
+            if config.task_type == "generate_tool":
+                try:
+                    from agents.tool_builder.agent import ToolBuilderAgent
+                    from tools.tool_builder_tools import build_local_tool_handlers
+
+                    _tb_agent = ToolBuilderAgent()
+                    _local_tool_handlers = build_local_tool_handlers(agent=_tb_agent)
+                    log(
+                        "TASK",
+                        f"ToolBuilderAgent initialized with {len(_local_tool_handlers)} "
+                        f"local tool handlers: {list(_local_tool_handlers.keys())}",
+                    )
+                    # Attach to bp_tracker for future pre-tool-use hook wiring
+                    if bp_tracker is not None:
+                        bp_tracker.local_tool_handlers = _local_tool_handlers
+                except Exception as _tb_exc:
+                    log(
+                        "WARN",
+                        f"ToolBuilderAgent init failed (fail-open, task continues): "
+                        f"{type(_tb_exc).__name__}: {_tb_exc}",
+                    )
+
+            # ----------------------------------------------------------------
+            # Phase C2 — BlueprintBuilderAgent local tool handlers
+            # When the task type is 'generate_blueprint', build the
+            # BlueprintBuilderAgent and register its tool implementations as
+            # local_tool_handlers.
+            #
+            # TODO (Phase C2 full wiring): Pass local_tool_handlers to
+            # BlueprintTracker so it can intercept Claude Agent SDK tool calls
+            # and route them to these Python callables, returning synthetic
+            # ToolResult messages. The interception requires a pre-tool-use
+            # hook that denies the SDK's tool execution and injects the result
+            # as a ToolResultBlock. See blueprint_tracker.py for the hook
+            # protocol. Until the pre-tool hook is wired, the SDK will attempt
+            # to call the tool spec tools (which are defined in the blueprint
+            # but not registered as MCP tools), and the agent will complete
+            # via its system_prompt reasoning.
+            # ----------------------------------------------------------------
+            if config.task_type == "generate_blueprint":
+                try:
+                    from agents.blueprint_builder.agent import BlueprintBuilderAgent
+                    from tools.blueprint_builder_tools import (
+                        build_local_tool_handlers as build_bp_tool_handlers,
+                    )
+
+                    _bb_agent = BlueprintBuilderAgent()
+                    _local_tool_handlers = build_bp_tool_handlers(agent=_bb_agent)
+                    log(
+                        "TASK",
+                        f"BlueprintBuilderAgent initialized with {len(_local_tool_handlers)} "
+                        f"local tool handlers: {list(_local_tool_handlers.keys())}",
+                    )
+                    # Attach to bp_tracker for future pre-tool-use hook wiring
+                    if bp_tracker is not None:
+                        bp_tracker.local_tool_handlers = _local_tool_handlers
+                except Exception as _bb_exc:
+                    log(
+                        "WARN",
+                        f"BlueprintBuilderAgent init failed (fail-open, task continues): "
+                        f"{type(_bb_exc).__name__}: {_bb_exc}",
+                    )
+
             # Run agent
             disk_before = get_disk_usage(AGENT_WORKSPACE)
             start_time = time.time()

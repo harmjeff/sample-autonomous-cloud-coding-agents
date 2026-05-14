@@ -130,6 +130,50 @@ def _apply_state_mutations(
         elif tool_name == "finish":
             state["finish_called"] = True
 
+        # ToolBuilderAgent tool state mutations
+        elif tool_name == "search_capability_index":
+            state["search_complete"] = True
+
+        elif tool_name == "generate_tool_code":
+            state["generation_attempts"] = state.get("generation_attempts", 0) + 1
+            try:
+                import json as _json
+
+                parsed = _json.loads(tool_output) if isinstance(tool_output, str) else tool_output
+                if isinstance(parsed, dict) and "scaffold" in parsed:
+                    state["generated_code"] = parsed["scaffold"][:500]
+            except Exception:
+                pass
+
+        elif tool_name == "test_in_sandbox":
+            try:
+                import json as _json
+
+                parsed = _json.loads(tool_output) if isinstance(tool_output, str) else tool_output
+                if isinstance(parsed, dict):
+                    state["test_results"] = {
+                        "all_passed": parsed.get("all_passed", False),
+                        "passed": parsed.get("passed", 0),
+                        "failed": parsed.get("failed", 0),
+                    }
+                    state["tests_passed"] = bool(parsed.get("all_passed", False))
+            except Exception:
+                pass
+
+        elif tool_name == "request_secret_registration":
+            try:
+                import json as _json
+
+                parsed = _json.loads(tool_output) if isinstance(tool_output, str) else tool_output
+                secret_name = tool_input.get("secret_name", "")
+                if secret_name:
+                    state.setdefault("secrets_pending", []).append(secret_name)
+            except Exception:
+                pass
+
+        elif tool_name == "register_tool":
+            state["tool_registered"] = True
+
         elif tool_name in ("Bash", "Write", "Edit", "Read"):
             # Coding tool — track consecutive build failures
             if tool_name == "Bash":

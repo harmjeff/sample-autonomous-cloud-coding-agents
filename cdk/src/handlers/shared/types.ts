@@ -24,7 +24,7 @@ import type { ComputeType } from './repo-config';
 import type { TaskStatusType } from '../../constructs/task-status';
 
 /** Valid task types for task creation. */
-export type TaskType = 'new_task' | 'pr_iteration' | 'pr_review';
+export type TaskType = 'new_task' | 'pr_iteration' | 'pr_review' | 'generate_tool' | 'generate_blueprint';
 
 /** Execution mode for a task — mirrors TaskMode in blueprint.ts. */
 export type TaskMode = 'coding' | 'knowledge';
