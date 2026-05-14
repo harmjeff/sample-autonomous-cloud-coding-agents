@@ -37,6 +37,7 @@ import { Blueprint } from '../constructs/blueprint';
 import { ConcurrencyReconciler } from '../constructs/concurrency-reconciler';
 import { DnsFirewall } from '../constructs/dns-firewall';
 import { FanOutConsumer } from '../constructs/fanout-consumer';
+import { PreflightLambda } from '../constructs/preflight-lambda';
 import { RepoTable } from '../constructs/repo-table';
 import { StrandedTaskReconciler } from '../constructs/stranded-task-reconciler';
 // import { EcsAgentCluster } from '../constructs/ecs-agent-cluster';
@@ -47,8 +48,8 @@ import { TaskNudgesTable } from '../constructs/task-nudges-table';
 import { TaskOrchestrator } from '../constructs/task-orchestrator';
 import { TaskTable } from '../constructs/task-table';
 import { TraceArtifactsBucket } from '../constructs/trace-artifacts-bucket';
+import { TrustEventsTable } from '../constructs/trust-events-table';
 import { UserConcurrencyTable } from '../constructs/user-concurrency-table';
-import { PreflightLambda } from '../constructs/preflight-lambda';
 import { WebhookTable } from '../constructs/webhook-table';
 
 export class AgentStack extends Stack {
@@ -71,6 +72,7 @@ export class AgentStack extends Stack {
     const userConcurrencyTable = new UserConcurrencyTable(this, 'UserConcurrencyTable');
     const webhookTable = new WebhookTable(this, 'WebhookTable');
     const repoTable = new RepoTable(this, 'RepoTable');
+    const trustEventsTable = new TrustEventsTable(this, 'TrustEventsTable');
 
     // --trace trajectory storage (design §10.1). Opt-in per task; only
     // written when the submit payload sets ``trace: true``.
@@ -246,6 +248,7 @@ export class AgentStack extends Stack {
       TASK_EVENTS_TABLE_NAME: taskEventsTable.table.tableName,
       NUDGES_TABLE_NAME: taskNudgesTable.table.tableName,
       USER_CONCURRENCY_TABLE_NAME: userConcurrencyTable.table.tableName,
+      TRUST_EVENTS_TABLE_NAME: trustEventsTable.table.tableName,
       // --trace artifact store (§10.1). The agent writes the JSONL
       // trajectory to ``traces/<user_id>/<task_id>.jsonl.gz`` on
       // terminal state when the submit payload enabled ``trace``.
@@ -262,10 +265,9 @@ export class AgentStack extends Stack {
       //   MISE_DATA_DIR — mise's pipx backend sets UV_TOOL_DIR inside installs/,
       //     and uv flocks that directory → must be local.
       MISE_DATA_DIR: '/tmp/mise-data',
-      UV_CACHE_DIR: '/tmp/uv-cache',
-      // Blueprint registry path — the blueprints/ directory is bundled
-      // inside the agent Docker image at /app/blueprints.
+      // Blueprint registry path — blueprints/ copied into image at /app/blueprints
       BLUEPRINTS_DIR: '/app/blueprints',
+      UV_CACHE_DIR: '/tmp/uv-cache',
       // Persistent mount (no flock):
       CLAUDE_CONFIG_DIR: '/mnt/workspace/.claude-config',
       npm_config_cache: '/mnt/workspace/.npm-cache',
@@ -317,6 +319,7 @@ export class AgentStack extends Stack {
     taskEventsTable.table.grantReadWriteData(runtime);
     taskNudgesTable.table.grantReadWriteData(runtime);
     userConcurrencyTable.table.grantReadWriteData(runtime);
+    trustEventsTable.table.grantReadWriteData(runtime);
     githubTokenSecret.grantRead(runtime);
     applicationLogGroup.grantWrite(runtime);
     agentMemory.grantReadWrite(runtime);
@@ -421,6 +424,11 @@ export class AgentStack extends Stack {
       description: 'Name of the DynamoDB repo config table',
     });
 
+    new CfnOutput(this, 'TrustEventsTableName', {
+      value: trustEventsTable.table.tableName,
+      description: 'Name of the DynamoDB trust events table (Phase E — Layer 1 Trust)',
+    });
+
     new CfnOutput(this, 'GitHubTokenSecretArn', {
       value: githubTokenSecret.secretArn,
       description: 'ARN of the Secrets Manager secret for the GitHub token',
@@ -481,17 +489,15 @@ export class AgentStack extends Stack {
     // (reads during context hydration, writes for fallback episodes)
     agentMemory.grantReadWrite(orchestrator.fn);
 
-    // --- Pre-flight Lambda (Python 3.13 ARM64) ---
-    // Runs the AKW preflight pipeline (readiness → hydration → risk → admission).
-    // The orchestrator will invoke this via Lambda.invoke() in a subsequent step.
-    // Wiring into orchestrate-task.ts is deferred to the next merge phase.
+    // --- Pre-flight Lambda (AKW admission pipeline) ---
     const preflightLambda = new PreflightLambda(this, 'PreflightLambda', {
       extraEnv: {
-        AWS_ACCOUNT_REGION: process.env.AWS_REGION ?? 'us-east-1',
+        BLUEPRINTS_DIR: '/var/task/blueprints',
+        TRUST_EVENTS_TABLE_NAME: trustEventsTable.table.tableName,
       },
     });
-    // Grant the orchestrator permission to invoke the preflight function.
     preflightLambda.grantInvoke(orchestrator.fn);
+    trustEventsTable.table.grantReadWriteData(preflightLambda.fn);
 
     // --- Concurrency counter reconciler (drift correction) ---
     new ConcurrencyReconciler(this, 'ConcurrencyReconciler', {

@@ -30,7 +30,7 @@ import textwrap
 from pathlib import Path
 
 from registry.filesystem import FilesystemRegistryService
-from registry.models import ToolEntry, ToolStatus, SecretRequirement
+from registry.models import SecretRequirement, ToolEntry, ToolStatus
 from sandbox.http_client import SandboxManagerClient
 from sandbox.sandbox_manager import SandboxTestCase
 
@@ -40,7 +40,7 @@ from sandbox.sandbox_manager import SandboxTestCase
 # are implemented in tools/tool_builder_tools.py; they do NOT depend on
 # AKW's src.tools.* hierarchy.
 try:
-    from src.tools.base import BaseTool, ToolResult  # type: ignore[import-not-found]
+    from tools.base import BaseTool, ToolResult  # type: ignore[import-not-found]
 except ImportError:
     BaseTool = object  # type: ignore[assignment,misc]
     ToolResult = None  # type: ignore[assignment]
@@ -99,9 +99,9 @@ class ToolBuilderAgent:
         """Run test cases via SandboxManagerClient. Returns TestResults dict."""
         cases = [
             SandboxTestCase(
-                name=c.get("name", f"case_{i}"),
-                input=c.get("input", {}),
-                expect_error=c.get("expect_error", False),
+                name=str(c.get("name", f"case_{i}")),
+                input=dict(c.get("input") or {}),  # type: ignore[arg-type]
+                expect_error=bool(c.get("expect_error", False)),
             )
             for i, c in enumerate(test_cases or [{"name": "smoke", "input": {}}])
         ]
@@ -121,13 +121,15 @@ class ToolBuilderAgent:
             except Exception as exc:
                 result_error = str(exc)
                 case_passed = case.expect_error  # expected error but got exception
-                results.append({
-                    "case": case.name,
-                    "passed": case_passed,
-                    "duration_ms": 0,
-                    "error": result_error,
-                    "schema_valid": True,
-                })
+                results.append(
+                    {
+                        "case": case.name,
+                        "passed": case_passed,
+                        "duration_ms": 0,
+                        "error": result_error,
+                        "schema_valid": True,
+                    }
+                )
                 if case_passed:
                     passed += 1
                 else:
@@ -139,13 +141,15 @@ class ToolBuilderAgent:
             else:
                 failed += 1
 
-            results.append({
-                "case": case.name,
-                "passed": case_passed,
-                "duration_ms": result.duration_ms,
-                "error": result.error,
-                "schema_valid": result.schema_valid,
-            })
+            results.append(
+                {
+                    "case": case.name,
+                    "passed": case_passed,
+                    "duration_ms": result.duration_ms,
+                    "error": result.error,
+                    "schema_valid": result.schema_valid,
+                }
+            )
 
         all_passed = failed == 0
         return {
@@ -228,14 +232,14 @@ def build_tool_scaffold(
     in the generate_tool_code call.
     """
     props = input_schema.get("properties", {})
-    params = ", ".join(
-        f"{k}: {v.get('type', 'str')} = None" for k, v in props.items()
-    ) or "**kwargs"
+    params = (
+        ", ".join(f"{k}: {v.get('type', 'str')} = None" for k, v in props.items()) or "**kwargs"
+    )
 
-    secret_lines = "\n".join(
-        f'        {s["name"]} = os.getenv("{s["name"]}")'
-        for s in secrets
-    ) or "        pass  # no secrets required"
+    secret_lines = (
+        "\n".join(f'        {s["name"]} = os.getenv("{s["name"]}")' for s in secrets)
+        or "        pass  # no secrets required"
+    )
 
     error_comment = ""
     if errors:
@@ -247,7 +251,7 @@ def build_tool_scaffold(
         import os
         import json
 
-        class {tool_name.replace('-', '_').replace(' ', '_').title()}Tool:
+        class {tool_name.replace("-", "_").replace(" ", "_").title()}Tool:
             name = "{tool_name}"
             description = "{capability_description}"
             {error_comment}

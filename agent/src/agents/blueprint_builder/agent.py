@@ -69,12 +69,14 @@ class BlueprintBuilderAgent:
                 if overlap:
                     conf = len(overlap) / max(len(query_words), 1)
                     if conf >= min_confidence:
-                        matches.append({
-                            "blueprint_id": bp.id,
-                            "task_types": bp.task_types,
-                            "description": bp.system_prompt[:120] if bp.system_prompt else "",
-                            "confidence": round(conf, 2),
-                        })
+                        matches.append(
+                            {
+                                "blueprint_id": bp.id,
+                                "task_types": bp.task_types,
+                                "description": bp.system_prompt[:120] if bp.system_prompt else "",
+                                "confidence": round(conf, 2),
+                            }
+                        )
             return sorted(matches, key=lambda m: m["confidence"], reverse=True)
         except Exception as exc:
             logger.warning("BlueprintBuilderAgent.find_blueprints failed: %s", exc)

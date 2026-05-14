@@ -8,23 +8,23 @@ from typing import Any
 
 
 class AdmissionDecision(StrEnum):
-    ADMIT           = "ADMIT"
+    ADMIT = "ADMIT"
     ADMIT_WITH_HITL = "ADMIT_WITH_HITL"
-    DEFER           = "DEFER"
-    REJECT          = "REJECT"
+    DEFER = "DEFER"
+    REJECT = "REJECT"
 
 
 class TaskState(StrEnum):
-    NEW          = "new"
-    RETRY        = "retry"
+    NEW = "new"
+    RETRY = "retry"
     CONTINUATION = "continuation"
-    RESUMPTION   = "resumption"
+    RESUMPTION = "resumption"
 
 
 class RiskTier(StrEnum):
-    LOW      = "low"
-    MEDIUM   = "medium"
-    HIGH     = "high"
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
     CRITICAL = "critical"
 
 
@@ -54,6 +54,7 @@ class RiskResult:
 @dataclass
 class ExecutionBrief:
     """Output of Phase 1 pre-flight — handed to Phase 2 execution."""
+
     task_id: str
     task_type: str
     instructions: str

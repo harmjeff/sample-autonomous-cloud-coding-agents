@@ -42,6 +42,7 @@ logger = logging.getLogger(__name__)
 # Stage 1a — Readiness Check
 # ---------------------------------------------------------------------------
 
+
 class ReadinessChecker:
     """Lightweight precondition checks — runs before any expensive work."""
 
@@ -104,6 +105,7 @@ class ReadinessChecker:
 # Stage 1b — Context Hydration
 # ---------------------------------------------------------------------------
 
+
 class ContextHydrator:
     """Loads LTM memories and determines KB scope for the task."""
 
@@ -140,6 +142,7 @@ class ContextHydrator:
 # Stage 1c — Risk Assessment
 # ---------------------------------------------------------------------------
 
+
 class RiskAssessor:
     """Scores task risk across reversibility, scope, external effects."""
 
@@ -172,9 +175,9 @@ class RiskAssessor:
         factors["ltm_write_risk"] = 0.3 if req.scope.write_to_ltm else 0.0
 
         # Retry/resumption = higher risk (previous failure context)
-        factors["task_state_risk"] = 0.3 if readiness.task_state in (
-            TaskState.RETRY, TaskState.RESUMPTION
-        ) else 0.0
+        factors["task_state_risk"] = (
+            0.3 if readiness.task_state in (TaskState.RETRY, TaskState.RESUMPTION) else 0.0
+        )
 
         score = sum(factors.values()) / len(factors)
 
@@ -210,6 +213,7 @@ class RiskAssessor:
 # Stage 1d — Admission Policy
 # ---------------------------------------------------------------------------
 
+
 class AdmissionPolicy:
     """
     Applies the admissions rubric to produce a final decision.
@@ -221,16 +225,16 @@ class AdmissionPolicy:
 
     # Fallback hardcoded thresholds (used when no graduation engine is wired in)
     _FALLBACK_THRESHOLDS: ClassVar[dict[str, RiskTier]] = {
-        "supervised":  RiskTier.HIGH,      # ADMIT up to HIGH, HITL at CRITICAL
-        "autonomous":  RiskTier.CRITICAL,  # ADMIT up to CRITICAL
-        "restricted":  RiskTier.MEDIUM,    # ADMIT up to MEDIUM, HITL at HIGH
+        "supervised": RiskTier.HIGH,  # ADMIT up to HIGH, HITL at CRITICAL
+        "autonomous": RiskTier.CRITICAL,  # ADMIT up to CRITICAL
+        "restricted": RiskTier.MEDIUM,  # ADMIT up to MEDIUM, HITL at HIGH
     }
 
     # Risk tier that each autonomy level can admit without HITL
     _LEVEL_THRESHOLDS: ClassVar[dict[str, RiskTier]] = {
-        "restricted":  RiskTier.MEDIUM,
-        "supervised":  RiskTier.HIGH,
-        "autonomous":  RiskTier.CRITICAL,
+        "restricted": RiskTier.MEDIUM,
+        "supervised": RiskTier.HIGH,
+        "autonomous": RiskTier.CRITICAL,
     }
 
     def __init__(self, graduation_engine: Any = None) -> None:
@@ -289,6 +293,7 @@ class AdmissionPolicy:
 # Pipeline orchestrator
 # ---------------------------------------------------------------------------
 
+
 class PreflightPipeline:
     """
     Runs all four pre-flight stages and returns an ExecutionBrief.
@@ -317,7 +322,10 @@ class PreflightPipeline:
 
         if not readiness.ready:
             decision, reason = self._admission.decide(
-                req, readiness, HydrationResult(), RiskResult(tier=RiskTier.LOW),
+                req,
+                readiness,
+                HydrationResult(),
+                RiskResult(tier=RiskTier.LOW),
             )
             return ExecutionBrief(
                 task_id=req.task_id,
@@ -348,6 +356,7 @@ class PreflightPipeline:
         # Emit trust event for admission decision (optional — trust module may not be present)
         try:
             from trust import get_emitter  # type: ignore[import-not-found]
+
             _te = get_emitter()
             if _te:
                 _te.admission(
@@ -378,9 +387,7 @@ class PreflightPipeline:
                 logger.warning("Graduation engine evaluation failed (non-fatal): %s", e)
 
         hitl_triggers = (
-            list(req.trust.hitl_triggers)
-            if decision == AdmissionDecision.ADMIT_WITH_HITL
-            else []
+            list(req.trust.hitl_triggers) if decision == AdmissionDecision.ADMIT_WITH_HITL else []
         )
 
         return ExecutionBrief(

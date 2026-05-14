@@ -36,8 +36,8 @@ describe('AgentStack', () => {
     expect(template).toBeDefined();
   });
 
-  test('creates exactly 6 DynamoDB tables (including TaskNudgesTable for Phase 2)', () => {
-    template.resourceCountIs('AWS::DynamoDB::Table', 6);
+  test('creates exactly 7 DynamoDB tables (including TrustEventsTable for Phase E)', () => {
+    template.resourceCountIs('AWS::DynamoDB::Table', 7);
   });
 
   test('outputs TaskNudgesTableName', () => {
@@ -97,6 +97,23 @@ describe('AgentStack', () => {
     template.hasOutput('RepoTableName', {
       Description: 'Name of the DynamoDB repo config table',
     });
+  });
+
+  test('outputs TrustEventsTableName', () => {
+    template.hasOutput('TrustEventsTableName', {
+      Description: 'Name of the DynamoDB trust events table (Phase E — Layer 1 Trust)',
+    });
+  });
+
+  test('runtime receives TRUST_EVENTS_TABLE_NAME env var', () => {
+    const runtimes = template.findResources('AWS::BedrockAgentCore::Runtime');
+    const runtimeList = Object.values(runtimes);
+    expect(runtimeList).toHaveLength(1);
+    for (const rt of runtimeList) {
+      const envVars = (rt as { Properties?: { EnvironmentVariables?: Record<string, unknown> } })
+        .Properties?.EnvironmentVariables ?? {};
+      expect(envVars).toHaveProperty('TRUST_EVENTS_TABLE_NAME');
+    }
   });
 
   test('outputs RuntimeArn', () => {

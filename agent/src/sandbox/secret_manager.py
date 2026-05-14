@@ -57,7 +57,7 @@ class SecretManager:
             if not line or line.startswith("#"):
                 continue
             if line.startswith(prefix):
-                rest = line[len(prefix):]
+                rest = line[len(prefix) :]
                 if "=" in rest:
                     key, _, value = rest.partition("=")
                     secrets[key.strip()] = value.strip()
@@ -83,8 +83,7 @@ class SecretManager:
     def list_required_secrets(self, tool_id: str, required: list[str]) -> list[SecretRequirement]:
         registered = self.get_secrets_for_tool(tool_id)
         return [
-            SecretRequirement(name=n, description="", registered=n in registered)
-            for n in required
+            SecretRequirement(name=n, description="", registered=n in registered) for n in required
         ]
 
     def get_secret(self, tool_id: str, secret_name: str) -> str:

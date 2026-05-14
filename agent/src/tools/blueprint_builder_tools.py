@@ -140,9 +140,8 @@ def generate_blueprint(
         "id": blueprint_id,
         "version": "1",
         "task_types": [task_type],
-        "system_prompt": system_prompt or (
-            f"You are an autonomous agent that handles {task_description or task_type} tasks."
-        ),
+        "system_prompt": system_prompt
+        or (f"You are an autonomous agent that handles {task_description or task_type} tasks."),
         "tools": tools or [],
         "phases": phases or [],
         "hitl_conditions": hitl_conditions or [],

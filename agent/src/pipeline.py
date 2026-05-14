@@ -37,6 +37,32 @@ from telemetry import (
     upload_trace_to_s3,
 )
 
+# ---------------------------------------------------------------------------
+# Trust emitter — lazy import, fail-open if TRUST_EVENTS_TABLE_NAME not set
+# ---------------------------------------------------------------------------
+try:
+    from trust import configure_trust
+    from trust import get_emitter as _get_trust_emitter
+
+    _trust_configured = False
+
+    def _maybe_get_trust_emitter():
+        """Initialise trust emitter on first call; return None if unconfigured."""
+        global _trust_configured
+        if not _trust_configured and os.environ.get("TRUST_EVENTS_TABLE_NAME"):
+            try:
+                configure_trust()
+                _trust_configured = True
+            except Exception as _te:
+                log("WARN", f"Trust system init failed (fail-open): {type(_te).__name__}: {_te}")
+        return _get_trust_emitter()
+
+except ImportError:
+
+    def _maybe_get_trust_emitter():  # type: ignore[misc]
+        return None
+
+
 _SDK_NO_RESULT_MESSAGE = (
     "Agent SDK stream ended without a ResultMessage (agent_status=unknown). "
     "Treat as failure: possible SDK bug, network interruption, or protocol mismatch."
@@ -221,19 +247,6 @@ def _write_memory(
         )
 
     log("MEMORY", f"Memory write: episode={episode_ok}, learnings={learnings_ok}")
-
-    # Mem0 semantic write (A1 — dual backend, fail-open)
-    scope_id = config.repo_url or config.user_id or "unknown"
-    if self_feedback:
-        agent_memory.write_to_mem0(
-            scope_id=scope_id,
-            task_id=config.task_id,
-            content=self_feedback,
-            tags=[scope_id, config.task_type],
-            importance=0.8 if build_passed else 0.4,
-        )
-    agent_memory.run_mem0_lifecycle(scope_id=scope_id)
-
     return episode_ok or learnings_ok
 
 
@@ -257,8 +270,6 @@ def run_task(
     cedar_policies: list[str] | None = None,
     trace: bool = False,
     user_id: str = "",
-    task_mode: str = "coding",
-    blueprint_id: str = "",
 ) -> dict:
     """Run the full agent pipeline and return a serialized result dict.
 
@@ -272,7 +283,6 @@ def run_task(
     """
     from opentelemetry.trace import StatusCode
 
-    from blueprint_tracker import BlueprintTracker, load_blueprint_for_task
     from repo import setup_repo
 
     # Build config
@@ -341,13 +351,6 @@ def run_task(
 
             trajectory.set_truncation_callback(_on_trace_truncated)
         try:
-            # Mem0 semantic memory read (A1 — augments AgentCore Memory, fail-open)
-            scope_id = config.repo_url or config.user_id or "unknown"
-            mem0_knowledge = agent_memory.read_from_mem0(
-                scope_id=scope_id,
-                query=config.task_description or config.task_type,
-            )
-
             # Context hydration
             with task_span("task.context_hydration"):
                 if hydrated_context:
@@ -393,170 +396,53 @@ def run_task(
 
                     prompt = assemble_prompt(config)
 
-            # Append Mem0 semantic knowledge to prompt if available (fail-open)
-            if mem0_knowledge:
-                mem0_block = "\n\n## Additional semantic knowledge (Mem0)\n" + "\n".join(
-                    f"- {item}" for item in mem0_knowledge
-                )
-                prompt = prompt + mem0_block
-                log("MEMORY", f"Appended {len(mem0_knowledge)} Mem0 memories to prompt")
+            # Configure git and gh auth before setup_repo() uses them
+            subprocess.run(
+                ["git", "config", "--global", "user.name", "bgagent"],
+                check=True,
+                capture_output=True,
+                timeout=60,
+            )
+            subprocess.run(
+                ["git", "config", "--global", "user.email", "bgagent@noreply.github.com"],
+                check=True,
+                capture_output=True,
+                timeout=60,
+            )
+            os.environ["GITHUB_TOKEN"] = config.github_token
+            os.environ["GH_TOKEN"] = config.github_token
 
-            # ----------------------------------------------------------------
-            # Coding path: git/repo setup (skipped for knowledge tasks)
-            # ----------------------------------------------------------------
-            setup = None
-            repo_dir = AGENT_WORKSPACE
-            if config.task_mode == "coding":
-                # Configure git and gh auth before setup_repo() uses them
-                subprocess.run(
-                    ["git", "config", "--global", "user.name", "bgagent"],
-                    check=True,
-                    capture_output=True,
-                    timeout=60,
-                )
-                subprocess.run(
-                    ["git", "config", "--global", "user.email", "bgagent@noreply.github.com"],
-                    check=True,
-                    capture_output=True,
-                    timeout=60,
-                )
-                os.environ["GITHUB_TOKEN"] = config.github_token
-                os.environ["GH_TOKEN"] = config.github_token
+            # Set env vars for the prepare-commit-msg hook BEFORE setup_repo()
+            # so the hook has access to TASK_ID/PROMPT_VERSION from the start.
+            os.environ["TASK_ID"] = config.task_id
+            if prompt_version:
+                os.environ["PROMPT_VERSION"] = prompt_version
 
-                # Set env vars for the prepare-commit-msg hook BEFORE setup_repo()
-                os.environ["TASK_ID"] = config.task_id
-                if prompt_version:
-                    os.environ["PROMPT_VERSION"] = prompt_version
-
-                with task_span("task.repo_setup") as setup_span:
-                    setup = setup_repo(config)
-                    setup_span.set_attribute("build.before", setup.build_before)
-                progress.write_agent_milestone(
-                    "repo_setup_complete",
-                    f"branch={setup.branch} build_before={setup.build_before}",
-                )
-                repo_dir = setup.repo_dir
-
-                project_config = discover_project_config(repo_dir)
-                if project_config:
-                    log("TASK", f"Repo project configuration: {project_config}")
-                else:
-                    log("TASK", "No repo-level project configuration found")
+            # Setup repo (deterministic pre-hooks)
+            with task_span("task.repo_setup") as setup_span:
+                setup = setup_repo(config)
+                setup_span.set_attribute("build.before", setup.build_before)
+            progress.write_agent_milestone(
+                "repo_setup_complete",
+                f"branch={setup.branch} build_before={setup.build_before}",
+            )
 
             system_prompt = build_system_prompt(config, setup, hc, system_prompt_overrides)
 
-            # ----------------------------------------------------------------
-            # Blueprint phase tracking + PatternEvaluator (Phase D)
-            # Load blueprint for this task_type; inject its system_prompt and
-            # create a per-task BlueprintTracker wired into the hook system.
-            # Fail-open: if no blueprint found, agent runs with default prompt.
-            # ----------------------------------------------------------------
-            blueprint = load_blueprint_for_task(config.task_type)
-            bp_tracker: BlueprintTracker | None = None
-            if blueprint and blueprint.system_prompt.strip():
-                # Render blueprint parameters into system_prompt placeholders
-                bp_system_prompt = blueprint.system_prompt
-                for k, v in blueprint.parameters.items():
-                    bp_system_prompt = bp_system_prompt.replace(f"{{{k}}}", str(v))
-                # Substitute runtime values
-                bp_system_prompt = (
-                    bp_system_prompt.replace("{repo_url}", config.repo_url or "")
-                    .replace("{task_id}", config.task_id)
-                    .replace("{branch_name}", setup.branch if setup else "")
-                    .replace("{default_branch}", setup.default_branch if setup else "")
-                    .replace("{max_turns}", str(config.max_turns))
-                    .replace("{workspace}", AGENT_WORKSPACE)
-                )
-                # Append blueprint system_prompt as additional instructions
-                system_prompt = system_prompt + "\n\n" + bp_system_prompt
-                bp_tracker = BlueprintTracker(blueprint, config.task_id, config.task_type)
-                log("TASK", f"Blueprint loaded: {blueprint.id} (phase={bp_tracker.current_phase})")
-
-            # ----------------------------------------------------------------
-            # Phase C1 — ToolBuilderAgent local tool handlers
-            # When the task type is 'generate_tool', build the ToolBuilderAgent
-            # and register its tool implementations as local_tool_handlers.
-            #
-            # TODO (Phase C1 full wiring): Pass local_tool_handlers to
-            # BlueprintTracker so it can intercept Claude Agent SDK tool calls
-            # and route them to these Python callables, returning synthetic
-            # ToolResult messages. The interception requires a pre-tool-use
-            # hook that denies the SDK's tool execution and injects the result
-            # as a ToolResultBlock. See blueprint_tracker.py for the hook
-            # protocol. Until the pre-tool hook is wired, the SDK will attempt
-            # to call the tool spec tools (which are defined in the blueprint
-            # but not registered as MCP tools), and the agent will complete
-            # via its system_prompt reasoning.
-            # ----------------------------------------------------------------
-            if config.task_type == "generate_tool":
-                try:
-                    from agents.tool_builder.agent import ToolBuilderAgent
-                    from tools.tool_builder_tools import build_local_tool_handlers
-
-                    _tb_agent = ToolBuilderAgent()
-                    _local_tool_handlers = build_local_tool_handlers(agent=_tb_agent)
-                    log(
-                        "TASK",
-                        f"ToolBuilderAgent initialized with {len(_local_tool_handlers)} "
-                        f"local tool handlers: {list(_local_tool_handlers.keys())}",
-                    )
-                    # Attach to bp_tracker for future pre-tool-use hook wiring
-                    if bp_tracker is not None:
-                        bp_tracker.local_tool_handlers = _local_tool_handlers
-                except Exception as _tb_exc:
-                    log(
-                        "WARN",
-                        f"ToolBuilderAgent init failed (fail-open, task continues): "
-                        f"{type(_tb_exc).__name__}: {_tb_exc}",
-                    )
-
-            # ----------------------------------------------------------------
-            # Phase C2 — BlueprintBuilderAgent local tool handlers
-            # When the task type is 'generate_blueprint', build the
-            # BlueprintBuilderAgent and register its tool implementations as
-            # local_tool_handlers.
-            #
-            # TODO (Phase C2 full wiring): Pass local_tool_handlers to
-            # BlueprintTracker so it can intercept Claude Agent SDK tool calls
-            # and route them to these Python callables, returning synthetic
-            # ToolResult messages. The interception requires a pre-tool-use
-            # hook that denies the SDK's tool execution and injects the result
-            # as a ToolResultBlock. See blueprint_tracker.py for the hook
-            # protocol. Until the pre-tool hook is wired, the SDK will attempt
-            # to call the tool spec tools (which are defined in the blueprint
-            # but not registered as MCP tools), and the agent will complete
-            # via its system_prompt reasoning.
-            # ----------------------------------------------------------------
-            if config.task_type == "generate_blueprint":
-                try:
-                    from agents.blueprint_builder.agent import BlueprintBuilderAgent
-                    from tools.blueprint_builder_tools import (
-                        build_local_tool_handlers as build_bp_tool_handlers,
-                    )
-
-                    _bb_agent = BlueprintBuilderAgent()
-                    _local_tool_handlers = build_bp_tool_handlers(agent=_bb_agent)
-                    log(
-                        "TASK",
-                        f"BlueprintBuilderAgent initialized with {len(_local_tool_handlers)} "
-                        f"local tool handlers: {list(_local_tool_handlers.keys())}",
-                    )
-                    # Attach to bp_tracker for future pre-tool-use hook wiring
-                    if bp_tracker is not None:
-                        bp_tracker.local_tool_handlers = _local_tool_handlers
-                except Exception as _bb_exc:
-                    log(
-                        "WARN",
-                        f"BlueprintBuilderAgent init failed (fail-open, task continues): "
-                        f"{type(_bb_exc).__name__}: {_bb_exc}",
-                    )
+            # Log discovered repo-level project configuration
+            # (all files loaded by setting_sources=["project"])
+            repo_dir = setup.repo_dir
+            project_config = discover_project_config(repo_dir)
+            if project_config:
+                log("TASK", f"Repo project configuration: {project_config}")
+            else:
+                log("TASK", "No repo-level project configuration found")
 
             # Run agent
             disk_before = get_disk_usage(AGENT_WORKSPACE)
             start_time = time.time()
 
             log("TASK", "Starting agent...")
-            log("TASK", f"Task mode: {config.task_mode}")
             if config.max_budget_usd:
                 log("TASK", f"Budget limit: ${config.max_budget_usd:.2f}")
             # Warn if uvloop is the active policy — subprocess SIGCHLD conflicts.
@@ -568,23 +454,6 @@ def run_task(
                     f"uvloop detected ({policy_name}) — this may cause subprocess "
                     f"SIGCHLD conflicts with the Claude Agent SDK",
                 )
-            # Register blueprint hooks (Phase D) — wires phase tracking and
-            # PatternEvaluator into the hook system for this task.
-            import hooks as _hooks
-
-            _blueprint_between_turns_hook = None
-            _blueprint_post_tool_hook = None
-            if bp_tracker is not None:
-
-                def _blueprint_between_turns_hook(ctx: dict) -> list[str]:
-                    return bp_tracker.evaluate_and_inject(ctx)
-
-                def _blueprint_post_tool_hook(tn: str, ti: dict, to: str) -> None:
-                    bp_tracker.on_tool_use(tn, ti, to)
-
-                _hooks.between_turns_hooks.append(_blueprint_between_turns_hook)
-                _hooks._post_tool_use_hooks.append(_blueprint_post_tool_hook)
-
             with task_span("task.agent_execution") as agent_span:
                 try:
                     agent_result = asyncio.run(
@@ -592,7 +461,7 @@ def run_task(
                             prompt,
                             system_prompt,
                             config,
-                            cwd=repo_dir,
+                            cwd=setup.repo_dir,
                             trajectory=trajectory,
                         )
                     )
@@ -601,13 +470,6 @@ def run_task(
                     agent_span.set_status(StatusCode.ERROR, str(e))
                     agent_span.record_exception(e)
                     agent_result = AgentResult(status="error", error=str(e))
-                finally:
-                    # Remove blueprint hooks so they don't carry over to
-                    # subsequent tasks in the same process (AgentCore reuse).
-                    if _blueprint_between_turns_hook in _hooks.between_turns_hooks:
-                        _hooks.between_turns_hooks.remove(_blueprint_between_turns_hook)
-                    if _blueprint_post_tool_hook in _hooks._post_tool_use_hooks:
-                        _hooks._post_tool_use_hooks.remove(_blueprint_post_tool_hook)
             progress.write_agent_milestone(
                 "agent_execution_complete",
                 f"status={agent_result.status} turns={agent_result.turns}",
@@ -666,34 +528,30 @@ def run_task(
                     "turns_attempted": agent_result.num_turns or agent_result.turns,
                 }
 
-            # Post-hooks — coding tasks only (knowledge tasks have no repo/PR)
-            build_passed = True
-            lint_passed = True
-            pr_url = None
-            if config.task_mode == "coding" and setup is not None:
-                with task_span("task.post_hooks") as post_span:
-                    # Safety net: commit any uncommitted tracked changes (skip for read-only tasks)
-                    if config.task_type == "pr_review":
-                        safety_committed = False
-                    else:
-                        safety_committed = ensure_committed(setup.repo_dir)
-                    post_span.set_attribute("safety_net.committed", safety_committed)
+            # Post-hooks (agent_result is guaranteed set by the try/except above)
+            with task_span("task.post_hooks") as post_span:
+                # Safety net: commit any uncommitted tracked changes (skip for read-only tasks)
+                if config.task_type == "pr_review":
+                    safety_committed = False
+                else:
+                    safety_committed = ensure_committed(setup.repo_dir)
+                post_span.set_attribute("safety_net.committed", safety_committed)
 
-                    build_passed = verify_build(setup.repo_dir)
-                    lint_passed = verify_lint(setup.repo_dir)
-                    pr_url = ensure_pr(
-                        config, setup, build_passed, lint_passed, agent_result=agent_result
-                    )
-                    post_span.set_attribute("build.passed", build_passed)
-                    post_span.set_attribute("lint.passed", lint_passed)
-                    post_span.set_attribute("pr.url", pr_url or "")
-                if pr_url:
-                    progress.write_agent_milestone("pr_created", pr_url)
+                build_passed = verify_build(setup.repo_dir)
+                lint_passed = verify_lint(setup.repo_dir)
+                pr_url = ensure_pr(
+                    config, setup, build_passed, lint_passed, agent_result=agent_result
+                )
+                post_span.set_attribute("build.passed", build_passed)
+                post_span.set_attribute("lint.passed", lint_passed)
+                post_span.set_attribute("pr.url", pr_url or "")
+            if pr_url:
+                progress.write_agent_milestone("pr_created", pr_url)
 
             # Memory write — capture task episode and repo learnings
             memory_written = False
             effective_memory_id = memory_id or os.environ.get("MEMORY_ID", "")
-            if effective_memory_id and setup is not None:
+            if effective_memory_id:
                 memory_written = _write_memory(
                     config,
                     setup,
@@ -714,9 +572,8 @@ def run_task(
             agent_status = agent_result.status
             # Default True = assume build was green before, so a post-agent
             # failure IS counted as a regression (conservative).
-            # Knowledge tasks have no setup; treat build as passed.
-            build_before = setup.build_before if setup is not None else True
-            if config.task_type == "pr_review" or config.task_mode == "knowledge":
+            build_before = setup.build_before
+            if config.task_type == "pr_review":
                 build_ok = True  # Review task — build status is informational only
                 if not build_passed:
                     log("INFO", "pr_review: build failed — informational only, not gating")
@@ -811,6 +668,40 @@ def run_task(
             # Persist terminal state to DynamoDB
             terminal_status = "COMPLETED" if overall_status == "success" else "FAILED"
             task_state.write_terminal(config.task_id, terminal_status, result_dict)
+
+            # Trust event emission — fail-open, never blocks return
+            try:
+                _trust_emitter = _maybe_get_trust_emitter()
+                if _trust_emitter is not None:
+                    from trust.models import TrustEventType as _TET
+
+                    _turns = int(turns_attempted) if turns_attempted else 0
+                    _cost_cents = int((agent_result.cost_usd or 0.0) * 100)
+                    if overall_status == "success":
+                        _trust_emitter.emit(
+                            event_type=_TET.TASK_COMPLETE,
+                            agent_id="jean_cloude",
+                            task_id=config.task_id,
+                            task_type=config.task_type,
+                            metadata={"turns": _turns, "cost_cents": _cost_cents},
+                        )
+                    else:
+                        _trust_emitter.emit(
+                            event_type=_TET.TASK_FAILED,
+                            agent_id="jean_cloude",
+                            task_id=config.task_id,
+                            task_type=config.task_type,
+                            metadata={
+                                "turns": _turns,
+                                "cost_cents": _cost_cents,
+                                "error_code": agent_status,
+                            },
+                        )
+            except Exception as _trust_exc:
+                log(
+                    "WARN",
+                    f"Trust emission failed (fail-open): {type(_trust_exc).__name__}: {_trust_exc}",
+                )
 
             return result_dict
 

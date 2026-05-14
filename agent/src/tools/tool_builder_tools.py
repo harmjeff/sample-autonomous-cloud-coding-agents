@@ -29,7 +29,6 @@ Tools implemented:
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 from typing import Any
@@ -72,7 +71,8 @@ def search_capability_index(
     # Phase F stub: no CapabilityIndex yet
     logger.debug(
         "search_capability_index: CapabilityIndex not available (Phase F pending) — "
-        "returning empty matches for description=%r", description
+        "returning empty matches for description=%r",
+        description,
     )
     return {"matches": [], "search_complete": True}
 
@@ -157,9 +157,9 @@ def test_in_sandbox(
             return {
                 **results,
                 "tests_passed": results.get("all_passed", False),
-                "error": None if results.get("all_passed") else (
-                    f"{results.get('failed', 0)} test case(s) failed"
-                ),
+                "error": None
+                if results.get("all_passed")
+                else (f"{results.get('failed', 0)} test case(s) failed"),
             }
         except Exception as exc:
             logger.warning("test_in_sandbox failed: %s", exc)
@@ -236,32 +236,37 @@ def request_secret_registration(
 
             # ULID-style event_id using timestamp + random suffix
             import random
+
             ts = int(time.time() * 1000)
             rand_suffix = random.randint(0, 0xFFFFFF)
             event_id = f"{ts:013d}{rand_suffix:06x}"
 
-            table.put_item(Item={
-                "task_id": _task_id,
-                "event_id": event_id,
-                "event_type": "secret_registration_required",
-                "metadata": event_metadata,
-                "timestamp": now.isoformat(),
-                "ttl": ttl,
-            })
+            table.put_item(
+                Item={
+                    "task_id": _task_id,
+                    "event_id": event_id,
+                    "event_type": "secret_registration_required",
+                    "metadata": event_metadata,
+                    "timestamp": now.isoformat(),
+                    "ttl": ttl,
+                }
+            )
             logger.info(
                 "secret_registration_required event written for tool_id=%r secret=%r",
-                tool_id, secret_name,
+                tool_id,
+                secret_name,
             )
         except Exception as exc:
             logger.warning(
-                "Failed to write secret_registration_required event to DynamoDB "
-                "(fail-open): %s", exc
+                "Failed to write secret_registration_required event to DynamoDB (fail-open): %s",
+                exc,
             )
     else:
         logger.warning(
             "request_secret_registration: TASK_EVENTS_TABLE_NAME not set or no "
             "task_id — HITL event not written. tool_id=%r secret=%r",
-            tool_id, secret_name,
+            tool_id,
+            secret_name,
         )
 
     # Return the request details so the blueprint state machine can track pending secrets
@@ -346,6 +351,7 @@ def register_tool(
 # ---------------------------------------------------------------------------
 # Local tool handler registry
 # ---------------------------------------------------------------------------
+
 
 def build_local_tool_handlers(agent=None) -> dict[str, Any]:
     """

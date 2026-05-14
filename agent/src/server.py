@@ -499,6 +499,28 @@ async def invoke_agent(request: Request, body: InvocationRequest):
         )
 
     _debug_cw("routing to sync path", task_id=params.get("task_id"))
+
+    # Emit ADMISSION_ADMIT trust event — fail-open, always admit for now
+    try:
+        from pipeline import _maybe_get_trust_emitter
+        from trust.models import TrustEventType as _TET
+
+        _trust_emitter = _maybe_get_trust_emitter()
+        if _trust_emitter is not None:
+            _trust_emitter.emit(
+                event_type=_TET.ADMISSION_ADMIT,
+                agent_id="jean_cloude",
+                task_id=params.get("task_id", ""),
+                task_type=params.get("task_type", "new_task"),
+                metadata={"risk_tier": "low", "reason": "admission_stub_always_admit"},
+            )
+    except Exception as _adm_exc:
+        print(
+            f"[server/trust] admission emit failed (fail-open): "
+            f"{type(_adm_exc).__name__}: {_adm_exc}",
+            flush=True,
+        )
+
     _spawn_background(params)
     task_id = params["task_id"]
     return JSONResponse(

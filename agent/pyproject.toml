@@ -12,10 +12,7 @@ dependencies = [
     "aws-opentelemetry-distro~=0.15.0",
     "mcp==1.23.0",
     "cedarpy>=4.8.0",
-    "httpx>=0.27.0",
-    "pyyaml>=6.0",
-    "urllib3>=2.7.0",
-    "python-multipart>=0.0.27",
+    "python-ulid>=3.1.0",
 ]
 
 [tool.bandit]
@@ -60,11 +57,11 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"src/entrypoint.py" = ["E402"]  # re-export shim: importlib.reload() call must precede re-export from-imports
-"src/system_prompt.py" = ["E501"]  # long prompt strings
-"src/prompts/*.py" = ["E501"]  # long prompt strings
-"tests/**" = ["S101", "S106", "S108", "E402"]  # assert; test tokens; /tmp paths; importorskip
-# AKW ported files: Unicode math in docstrings/comments, exception chaining patterns preserved
+"src/entrypoint.py" = ["E402"]
+"src/system_prompt.py" = ["E501"]
+"src/prompts/*.py" = ["E501"]
+"tests/**" = ["S101", "S106", "S108", "E402"]
+# AKW ported files: Unicode math, exception chaining, broad except (fail-open patterns)
 "src/interfaces/ltm.py" = ["RUF002", "RUF003", "B027"]
 "src/registry/capability_index.py" = ["RUF002", "RUF003", "S110", "SIM102"]
 "src/registry/filesystem.py" = ["B904", "S112"]
@@ -73,16 +70,20 @@ ignore = [
 "src/ltm_memory/recall.py" = ["RUF002", "RUF003", "TC001"]
 "src/ltm_memory/lifecycle.py" = ["RUF002", "RUF003"]
 "src/blueprint_tracker.py" = ["S110", "E501"]
-# AKW ported preflight files: broad exception handling (fail-open), dataclass shims, Any typing
 "src/preflight/pipeline.py" = ["B904", "S110"]
 "src/preflight/handler.py" = ["S110", "B904"]
 "src/pattern_evaluator.py" = ["F841", "B905", "E501", "S324"]
-# AKW ported sandbox files: subprocess execution patterns, broad exception handling, dynamic code execution
 "src/sandbox/sandbox_manager.py" = ["S603", "S607", "S102", "S110", "B904"]
 "src/sandbox/secret_manager.py" = ["B007"]
-# AKW ported blueprint builder files: broad exception handling (fail-open), dynamic YAML construction
 "src/agents/blueprint_builder/agent.py" = ["S110", "B904"]
 "src/tools/blueprint_builder_tools.py" = ["S110", "B904"]
+"src/agents/tool_builder/agent.py" = ["S110", "B904", "RUF002"]
+"src/tools/tool_builder_tools.py" = ["S110", "B904", "S311"]
+"src/trust/models.py" = ["E241", "RUF002", "RUF003"]
+"src/trust/emitter.py" = ["B904", "S110", "RUF002", "RUF003"]
+"src/trust/store.py" = ["B027", "RUF002", "RUF003"]
+"src/trust/graduation.py" = ["B904", "S110", "RUF002", "RUF003"]
+"src/trust/dynamo_store.py" = ["S110", "B904"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -91,3 +92,8 @@ pythonpath = ["src"]
 [tool.ty.environment]
 python-version = "3.13"
 extra-paths = ["src"]
+
+[[tool.ty.overrides]]
+# Ported AKW agent facades import AKW-only modules (tools.base) not present in ABCA
+include = ["src/agents/tool_builder/agent.py", "src/agents/blueprint_builder/agent.py"]
+rules = { unresolved-import = "ignore", invalid-argument-type = "ignore", no-matching-overload = "ignore" }

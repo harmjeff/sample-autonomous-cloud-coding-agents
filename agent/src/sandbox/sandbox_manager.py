@@ -71,7 +71,6 @@ class TestResults:
 
 
 class SandboxManager:
-
     def __init__(
         self,
         secret_manager: SecretManager | None = None,
@@ -154,23 +153,22 @@ class SandboxManager:
                 output_schema=case.expected_output_schema or None,
             )
 
-            case_passed = (
-                result.success != case.expect_error
-                and result.schema_valid
-            )
+            case_passed = result.success != case.expect_error and result.schema_valid
 
             if case_passed:
                 passed += 1
             else:
                 failed += 1
 
-            results.append({
-                "case": case.name,
-                "passed": case_passed,
-                "duration_ms": result.duration_ms,
-                "error": result.error,
-                "schema_valid": result.schema_valid,
-            })
+            results.append(
+                {
+                    "case": case.name,
+                    "passed": case_passed,
+                    "duration_ms": result.duration_ms,
+                    "error": result.error,
+                    "schema_valid": result.schema_valid,
+                }
+            )
 
         return TestResults(passed=passed, failed=failed, results=results)
 
@@ -225,13 +223,17 @@ class SandboxManager:
     ) -> ExecutionResult:
         """Attempt Podman container execution. Raises FileNotFoundError if podman absent."""
         cmd = [
-            "podman", "run", "--rm",
-            "--network", "none" if not network_allow_list else "bridge",
+            "podman",
+            "run",
+            "--rm",
+            "--network",
+            "none" if not network_allow_list else "bridge",
             f"--cpus={_DEFAULT_CPU}",
             f"--memory={_DEFAULT_MEMORY}",
             f"--timeout={timeout_seconds}",
             "--read-only",
-            "--tmpfs", "/tmp:rw,size=64m",  # noqa: S108
+            "--tmpfs",
+            "/tmp:rw,size=64m",  # noqa: S108
             # Mount tool code and runner read-only
             f"--volume={tool_path}:/tool/tool.py:ro",
             f"--volume={runner_path}:/tool/runner.py:ro",
@@ -414,14 +416,34 @@ except Exception as e:
     def _extract_deps(tool_code: str) -> list[str]:
         """Extract pip packages from import statements in generated code."""
         import re
+
         stdlib = {
-            "os", "sys", "json", "re", "time", "datetime", "pathlib",
-            "typing", "dataclasses", "abc", "io", "urllib", "http",
-            "collections", "functools", "itertools", "math", "random",
-            "string", "hashlib", "base64", "logging", "traceback",
+            "os",
+            "sys",
+            "json",
+            "re",
+            "time",
+            "datetime",
+            "pathlib",
+            "typing",
+            "dataclasses",
+            "abc",
+            "io",
+            "urllib",
+            "http",
+            "collections",
+            "functools",
+            "itertools",
+            "math",
+            "random",
+            "string",
+            "hashlib",
+            "base64",
+            "logging",
+            "traceback",
         }
         deps = set()
-        for match in re.finditer(r'^(?:import|from)\s+(\w+)', tool_code, re.MULTILINE):
+        for match in re.finditer(r"^(?:import|from)\s+(\w+)", tool_code, re.MULTILINE):
             pkg = match.group(1)
             if pkg not in stdlib and not pkg.startswith("_"):
                 deps.add(pkg)

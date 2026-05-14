@@ -36,6 +36,7 @@ _sandbox = SandboxManager()
 # Request / response models
 # ---------------------------------------------------------------------------
 
+
 class ExecuteRequest(BaseModel):
     tool_id: str
     tool_code: str
@@ -48,6 +49,7 @@ class ExecuteRequest(BaseModel):
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
+
 
 @app.get("/health")
 def health() -> dict[str, str]:

@@ -210,7 +210,7 @@ export class SandboxSidecar extends Construct {
       }),
       environment: {
         // Secrets Manager namespace prefix for tool secrets
-        SECRETS_FILE: '',  // Disable file-based secrets in ECS; rely on SM at runtime
+        SECRETS_FILE: '', // Disable file-based secrets in ECS; rely on SM at runtime
         PYTHONUNBUFFERED: '1',
       },
       healthCheck: {
